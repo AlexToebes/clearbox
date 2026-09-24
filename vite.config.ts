@@ -1,3 +1,4 @@
+/// <reference types="vitest/config" />
 import process from "node:process";
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
@@ -27,5 +28,10 @@ export default defineConfig(() => ({
       // 3. tell Vite to ignore watching `src-tauri`
       ignored: ["**/src-tauri/**"],
     },
+  },
+
+  test: {
+    environment: "node",
+    include: ["src/**/*.test.ts"],
   },
 }));
