@@ -1,25 +1,15 @@
-import { Button } from "@/components/ui/button";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
+import { Toaster } from "@/components/ui/sonner";
+import { AuthProvider } from "@/features/auth/AuthProvider";
+import { AuthScreen } from "@/features/auth/AuthScreen";
 
 function App() {
   return (
-    <main className="flex min-h-screen items-center justify-center p-6">
-      <Card className="w-full max-w-sm">
-        <CardHeader>
-          <CardTitle className="text-2xl">Clearbox</CardTitle>
-          <CardDescription>Clean up your Gmail, locally.</CardDescription>
-        </CardHeader>
-        <CardContent>
-          <Button className="w-full">Connect Gmail</Button>
-        </CardContent>
-      </Card>
-    </main>
+    <AuthProvider>
+      <main className="flex min-h-screen items-center justify-center p-6">
+        <AuthScreen />
+      </main>
+      <Toaster />
+    </AuthProvider>
   );
 }
 
