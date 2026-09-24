@@ -9,46 +9,45 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { useAuth } from "./context";
-import { describeAuthError } from "./errorMessage";
+import { describeAuthError, isCancelledAuthError } from "./errorMessage";
 
 /**
  * Shown while signed out: the "Connect Gmail" entry point, with an inline
- * error message on failure. "Cancel" is a UI-level abort only — it stops
- * showing the waiting state and ignores whatever `signIn()` eventually
- * does; it doesn't close the browser tab or the loopback listener early.
+ * error message on failure. "Cancel" aborts the in-progress `signIn()` via
+ * an `AbortController` — the session closes the loopback listener right
+ * away and stores no tokens (see `AuthSession.signIn` in
+ * `lib/auth/session.ts`); the resulting `OAuthError("cancelled")` isn't
+ * shown as an error since the user asked for it.
  */
 export function SignedOutCard() {
   const { auth } = useAuth();
   const [signingIn, setSigningIn] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const cancelledRef = useRef(false);
+  const abortControllerRef = useRef<AbortController | null>(null);
 
   async function handleConnect(): Promise<void> {
     if (!auth) {
       return;
     }
-    cancelledRef.current = false;
+    const controller = new AbortController();
+    abortControllerRef.current = controller;
     setSigningIn(true);
     setError(null);
     try {
-      await auth.signIn();
-      if (!cancelledRef.current) {
-        toast.success("Connected to Gmail.");
-      }
+      await auth.signIn({ signal: controller.signal });
+      toast.success("Connected to Gmail.");
     } catch (err) {
-      if (!cancelledRef.current) {
+      if (!isCancelledAuthError(err)) {
         setError(describeAuthError(err));
       }
     } finally {
-      if (!cancelledRef.current) {
-        setSigningIn(false);
-      }
+      abortControllerRef.current = null;
+      setSigningIn(false);
     }
   }
 
   function handleCancel(): void {
-    cancelledRef.current = true;
-    setSigningIn(false);
+    abortControllerRef.current?.abort();
   }
 
   return (

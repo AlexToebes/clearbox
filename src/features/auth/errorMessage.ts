@@ -14,9 +14,20 @@ export function describeAuthError(err: unknown): string {
         return "Session expired, please reconnect.";
       case "sign_in_in_progress":
         return "A sign-in is already in progress.";
+      case "cancelled":
+        return "Sign-in was cancelled.";
       default:
         return err.description ?? "Something went wrong signing in.";
     }
   }
   return "Something went wrong signing in.";
+}
+
+/**
+ * True for the `OAuthError("cancelled")` a user-initiated `signIn({ signal
+ * })` abort rejects with (`lib/auth/session.ts`). Callers use this to skip
+ * showing an error for a cancellation the user asked for themselves.
+ */
+export function isCancelledAuthError(err: unknown): boolean {
+  return err instanceof OAuthError && err.code === "cancelled";
 }
