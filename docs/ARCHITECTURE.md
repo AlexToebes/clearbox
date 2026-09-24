@@ -20,20 +20,20 @@ against that cache. Nothing is sent to a Clearbox server — there is none.
 
 ## Stack
 
-| Concern | Choice |
-| --- | --- |
-| Desktop shell | Tauri 2 |
-| UI | React, Vite, TypeScript (strict) |
-| Styling / components | Tailwind CSS v4, shadcn/ui |
-| Charts | shadcn/ui charts (Recharts) |
-| Tables | TanStack Table + TanStack Virtual |
-| Data fetching / caching in UI | TanStack Query |
-| Local database | SQLite via `tauri-plugin-sql` |
-| HTTP | `tauri-plugin-http` (requests from Rust: no CORS, URL allowlist) |
-| OAuth loopback server | `tauri-plugin-oauth` |
-| Open system browser | `tauri-plugin-opener` |
-| Secret storage | OS keychain via the `keyring` crate (small Rust commands) |
-| Tests | Vitest; SQL tests use Node's built-in `node:sqlite` |
+| Concern                       | Choice                                                           |
+| ----------------------------- | ---------------------------------------------------------------- |
+| Desktop shell                 | Tauri 2                                                          |
+| UI                            | React, Vite, TypeScript (strict)                                 |
+| Styling / components          | Tailwind CSS v4, shadcn/ui                                       |
+| Charts                        | shadcn/ui charts (Recharts)                                      |
+| Tables                        | TanStack Table + TanStack Virtual                                |
+| Data fetching / caching in UI | TanStack Query                                                   |
+| Local database                | SQLite via `tauri-plugin-sql`                                    |
+| HTTP                          | `tauri-plugin-http` (requests from Rust: no CORS, URL allowlist) |
+| OAuth loopback server         | `tauri-plugin-oauth`                                             |
+| Open system browser           | `tauri-plugin-opener`                                            |
+| Secret storage                | OS keychain via the `keyring` crate (small Rust commands)        |
+| Tests                         | Vitest; SQL tests use Node's built-in `node:sqlite`              |
 
 ## Layout
 
