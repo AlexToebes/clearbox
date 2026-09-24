@@ -13,12 +13,17 @@ export interface AuthContextValue {
   auth: AuthSession | null;
   /** `null` when `status === "no_config"`. */
   gmail: GmailClient | null;
+  /** Set when `AuthSession.restore()` rejected on mount — typically the OS
+   * keychain being unavailable. `null` otherwise, including while restore
+   * is still pending. */
+  restoreError: unknown;
 }
 
 export const NO_CONFIG_VALUE: AuthContextValue = {
   status: "no_config",
   auth: null,
   gmail: null,
+  restoreError: null,
 };
 
 export const AuthContext = createContext<AuthContextValue | null>(null);

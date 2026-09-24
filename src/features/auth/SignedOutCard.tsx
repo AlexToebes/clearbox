@@ -9,7 +9,11 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { useAuth } from "./context";
-import { describeAuthError, isCancelledAuthError } from "./errorMessage";
+import {
+  describeAuthError,
+  describeRestoreError,
+  isCancelledAuthError,
+} from "./errorMessage";
 
 /**
  * Shown while signed out: the "Connect Gmail" entry point, with an inline
@@ -18,9 +22,15 @@ import { describeAuthError, isCancelledAuthError } from "./errorMessage";
  * away and stores no tokens (see `AuthSession.signIn` in
  * `lib/auth/session.ts`); the resulting `OAuthError("cancelled")` isn't
  * shown as an error since the user asked for it.
+ *
+ * Also surfaces `restoreError` (set by `AuthProvider` when
+ * `AuthSession.restore()` rejected, e.g. an unavailable OS keychain) so the
+ * user isn't just left looking at a plain signed-out screen with no
+ * explanation. The Connect button stays enabled either way — retrying is
+ * fine.
  */
 export function SignedOutCard() {
-  const { auth } = useAuth();
+  const { auth, restoreError } = useAuth();
   const [signingIn, setSigningIn] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
@@ -72,6 +82,21 @@ export function SignedOutCard() {
           </Button>
         )}
         {error && <p className="text-destructive text-sm">{error}</p>}
+        {restoreError !== null && (
+          <div className="text-sm">
+            <p>
+              Clearbox couldn't access your system keychain, which it uses to
+              store your Google sign-in securely.
+            </p>
+            <p className="text-muted-foreground mt-1 text-xs">
+              {describeRestoreError(restoreError)}
+            </p>
+            <p className="text-muted-foreground mt-1 text-xs">
+              If you're on Linux, make sure a Secret Service provider such as
+              GNOME Keyring or KWallet is running.
+            </p>
+          </div>
+        )}
       </CardContent>
     </Card>
   );

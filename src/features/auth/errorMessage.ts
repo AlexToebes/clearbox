@@ -31,3 +31,12 @@ export function describeAuthError(err: unknown): string {
 export function isCancelledAuthError(err: unknown): boolean {
   return err instanceof OAuthError && err.code === "cancelled";
 }
+
+/**
+ * Renders the raw error text from a failed `AuthSession.restore()` — shown
+ * as a small, muted detail line underneath the friendlier explanation in
+ * `SignedOutCard`.
+ */
+export function describeRestoreError(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
