@@ -17,3 +17,18 @@ export interface SecretStore {
   /** Deletes a value. Deleting an already-absent key is not an error. */
   delete(key: string): Promise<void>;
 }
+
+/**
+ * A one-shot local HTTP server that receives the Google OAuth redirect. See
+ * `lib/platform/oauth.ts` (backed by `tauri-plugin-oauth`, which binds
+ * `127.0.0.1`) for the implementation.
+ */
+export interface LoopbackListener {
+  /** `http://127.0.0.1:<port>` — pass as `redirect_uri` to Google. */
+  redirectUri: string;
+  /** Resolves with the full URL (including query string) of the first
+   * redirect received, e.g. `http://127.0.0.1:<port>/?code=...&state=...`. */
+  nextRedirect(): Promise<string>;
+  /** Stops the listener. Safe to call more than once. */
+  close(): Promise<void>;
+}

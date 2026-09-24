@@ -5,8 +5,20 @@
   "windows": ["main"],
   "permissions": [
     "core:default",
-    "opener:default",
     "sql:default",
-    "sql:allow-execute"
+    "sql:allow-execute",
+    {
+      "identifier": "http:default",
+      "allow": [
+        { "url": "https://oauth2.googleapis.com/*" },
+        { "url": "https://gmail.googleapis.com/*" }
+      ]
+    },
+    {
+      "identifier": "opener:allow-open-url",
+      "allow": [{ "url": "https://accounts.google.com/*" }]
+    },
+    "oauth:allow-start",
+    "oauth:allow-cancel"
   ]
 }
