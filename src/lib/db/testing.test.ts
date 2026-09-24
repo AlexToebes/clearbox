@@ -25,7 +25,7 @@ describe("createTestDb", () => {
     expect(rowsInB).toEqual([]);
   });
 
-  it("binds $1, $2, … params positionally, including a boolean and an undefined value", async () => {
+  it("binds $1, $2, … params positionally, including a null value", async () => {
     const db = createTestDb();
 
     await db.execute(
@@ -44,9 +44,9 @@ describe("createTestDb", () => {
         1_700_000_000_000,
         1234,
         '["UNREAD","INBOX"]',
-        true, // is_unread -> should bind as 1
-        false, // is_trashed -> should bind as 0
-        undefined, // list_unsubscribe -> should bind as null
+        1, // is_unread
+        0, // is_trashed
+        null, // list_unsubscribe
         "<https://example.com/unsub>, POST",
       ],
     );
@@ -69,6 +69,26 @@ describe("createTestDb", () => {
     expect(row.list_unsubscribe_post).toBe("<https://example.com/unsub>, POST");
   });
 
+  it("binds a boolean as JSON text, not an integer — the tauri-plugin-sql trap this adapter deliberately reproduces", async () => {
+    const db = createTestDb();
+
+    await db.execute(
+      "INSERT INTO sync_state (key, value) VALUES ($1, $2)",
+      // `SqlParam` excludes booleans precisely so this doesn't compile in
+      // real call sites; cast past it here to document the runtime trap.
+      ["flag", true as unknown as string],
+    );
+
+    const rows = await db.select<{ value: string }>(
+      "SELECT value FROM sync_state WHERE key = $1",
+      ["flag"],
+    );
+
+    // Bound as the *text* "true" (via JSON.stringify), matching
+    // tauri-plugin-sql/sqlx-sqlite's real behavior — not the integer 1.
+    expect(rows[0]!.value).toBe("true");
+  });
+
   it("binds more than nine params correctly (exercises $10, $11, …)", async () => {
     const db = createTestDb();
 
@@ -81,7 +101,7 @@ describe("createTestDb", () => {
           id, thread_id, from_email, from_domain, internal_date,
           size_estimate, label_ids, is_unread
         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-        [id, id, "a@example.com", "example.com", 0, 0, "[]", false],
+        [id, id, "a@example.com", "example.com", 0, 0, "[]", 0],
       );
     }
 

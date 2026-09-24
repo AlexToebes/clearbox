@@ -3,7 +3,7 @@ import { readdirSync, readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import type { Db } from "./db";
+import type { Db, SqlParam } from "./db";
 
 // node:sqlite is still an experimental module and logs a one-time
 // `ExperimentalWarning` the moment it's loaded. That's expected here (it's
@@ -23,22 +23,39 @@ process.emitWarning = (warning: string | Error, ...rest: unknown[]) => {
 const require = createRequire(import.meta.url);
 const { DatabaseSync } = require("node:sqlite") as typeof import("node:sqlite");
 
-type SqlBindable = string | number | bigint | null;
+type SqliteBindable = string | number | null;
+
+/**
+ * Mirrors `tauri-plugin-sql`'s own parameter binding (see
+ * `tauri-plugin-sql` 2.4.1's `src/wrapper.rs`, `DbPool::Sqlite::execute`/
+ * `select`): `null`/`undefined` bind as SQL `NULL`, strings and numbers
+ * bind natively, and *everything else* — notably booleans, arrays and
+ * objects — falls through to `query.bind(value)`, which binds a
+ * `serde_json::Value` that sqlx-sqlite encodes as TEXT JSON. In practice
+ * that means a JS `true` is stored as the three-character string `"true"`,
+ * not the integer `1`. Don't rely on this fallback for flag columns —
+ * convert booleans to `0`/`1` (or `SqlParam`-typed values generally)
+ * before calling `execute`/`select`; this only exists so the test adapter
+ * reproduces the real trap instead of quietly avoiding it.
+ */
+function toBindable(value: unknown): SqliteBindable {
+  if (value === null || value === undefined) {
+    return null;
+  }
+  if (typeof value === "string" || typeof value === "number") {
+    return value;
+  }
+  return JSON.stringify(value);
+}
 
 /** Node's built-in `node:sqlite` doesn't bind `$1, $2, …` positionally, only
  * as named parameters — convert our positional array into `{ $1: …, $2: … }`. */
-function toNamedParams(params: unknown[]): Record<string, SqlBindable> {
-  const named: Record<string, SqlBindable> = {};
+function toNamedParams(
+  params: readonly unknown[],
+): Record<string, SqliteBindable> {
+  const named: Record<string, SqliteBindable> = {};
   params.forEach((value, index) => {
-    let bound: SqlBindable;
-    if (typeof value === "boolean") {
-      bound = value ? 1 : 0;
-    } else if (value === undefined) {
-      bound = null;
-    } else {
-      bound = value as SqlBindable;
-    }
-    named[`$${index + 1}`] = bound;
+    named[`$${index + 1}`] = toBindable(value);
   });
   return named;
 }
@@ -65,12 +82,12 @@ export function createTestDb(): Db {
   applyMigrations(sqlite);
 
   return {
-    execute: (sql, params = []) => {
+    execute: (sql, params: SqlParam[] = []) => {
       const stmt = sqlite.prepare(sql);
       const result = stmt.run(toNamedParams(params));
       return Promise.resolve({ rowsAffected: Number(result.changes) });
     },
-    select: <T>(sql: string, params: unknown[] = []) => {
+    select: <T>(sql: string, params: SqlParam[] = []) => {
       const stmt = sqlite.prepare(sql);
       const rows = stmt.all(toNamedParams(params));
       return Promise.resolve(rows.map((row) => ({ ...row })) as T[]);

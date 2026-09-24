@@ -1,4 +1,4 @@
-import type { Db } from "./db";
+import type { Db, SqlParam } from "./db";
 import type { MessageRow } from "./types";
 
 /** A single SQL statement is limited to this many bound parameters, so
@@ -45,7 +45,7 @@ export async function upsertMessages(
   }
 
   for (const batch of chunk(rows, ROWS_PER_UPSERT_CHUNK)) {
-    const params: unknown[] = [];
+    const params: SqlParam[] = [];
     const valuesSql = batch
       .map((row) => {
         const placeholders = MESSAGE_COLUMNS.map((column) => {
@@ -101,11 +101,12 @@ export async function setTrashed(
 
   // One param slot is reserved for `trashed` itself.
   const idsPerChunk = MAX_PARAMS - 1;
+  const trashedValue = trashed ? 1 : 0;
   for (const batch of chunk(ids, idsPerChunk)) {
     const placeholders = batch.map((_, i) => `$${i + 2}`).join(", ");
     await db.execute(
       `UPDATE messages SET is_trashed = $1 WHERE id IN (${placeholders})`,
-      [trashed, ...batch],
+      [trashedValue, ...batch],
     );
   }
 }
@@ -198,7 +199,7 @@ export async function getSenders(
   const groupColumn = `m.${GROUP_COLUMNS[opts.groupBy]}`;
   const sortExpr = SORT_EXPRESSIONS[opts.sortBy];
 
-  const params: unknown[] = [];
+  const params: SqlParam[] = [];
   const whereClauses = ["m.is_trashed = 0"];
 
   const search = opts.search?.trim();

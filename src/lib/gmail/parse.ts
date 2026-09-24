@@ -109,8 +109,8 @@ export function toMessageRow(message: GmailMessage): MessageRow {
     internal_date: Number(message.internalDate),
     size_estimate: message.sizeEstimate,
     label_ids: JSON.stringify(labelIds),
-    is_unread: labelIds.includes("UNREAD"),
-    is_trashed: labelIds.includes("TRASH"),
+    is_unread: labelIds.includes("UNREAD") ? 1 : 0,
+    is_trashed: labelIds.includes("TRASH") ? 1 : 0,
     list_unsubscribe: findHeader(message, "List-Unsubscribe") ?? null,
     list_unsubscribe_post: findHeader(message, "List-Unsubscribe-Post") ?? null,
   };

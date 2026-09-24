@@ -183,8 +183,8 @@ describe("toMessageRow", () => {
       internal_date: 1_700_000_000_000,
       size_estimate: 4321,
       label_ids: JSON.stringify(["INBOX", "UNREAD"]),
-      is_unread: true,
-      is_trashed: false,
+      is_unread: 1,
+      is_trashed: 0,
       list_unsubscribe: "<https://example.com/unsub>",
       list_unsubscribe_post: "List-Unsubscribe=One-Click",
     });
@@ -206,17 +206,17 @@ describe("toMessageRow", () => {
     expect(row.subject).toBe("Hi");
   });
 
-  it("sets is_unread/is_trashed from the UNREAD/TRASH labels", () => {
+  it("sets is_unread/is_trashed (as 0/1) from the UNREAD/TRASH labels", () => {
     expect(toMessageRow(message({ labelIds: ["TRASH"] }))).toMatchObject({
-      is_unread: false,
-      is_trashed: true,
+      is_unread: 0,
+      is_trashed: 1,
     });
     expect(
       toMessageRow(message({ labelIds: ["UNREAD", "TRASH"] })),
-    ).toMatchObject({ is_unread: true, is_trashed: true });
+    ).toMatchObject({ is_unread: 1, is_trashed: 1 });
     expect(toMessageRow(message({ labelIds: [] }))).toMatchObject({
-      is_unread: false,
-      is_trashed: false,
+      is_unread: 0,
+      is_trashed: 0,
     });
   });
 
@@ -243,8 +243,8 @@ describe("toMessageRow", () => {
   it("handles a missing labelIds entirely", () => {
     const row = toMessageRow(message({ labelIds: undefined }));
     expect(row.label_ids).toBe("[]");
-    expect(row.is_unread).toBe(false);
-    expect(row.is_trashed).toBe(false);
+    expect(row.is_unread).toBe(0);
+    expect(row.is_trashed).toBe(0);
   });
 
   it("converts internalDate (ms string) to a number", () => {

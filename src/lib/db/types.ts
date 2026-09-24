@@ -16,8 +16,10 @@ export interface MessageRow {
   size_estimate: number;
   /** JSON-encoded array of Gmail label ids. */
   label_ids: string;
-  is_unread: boolean;
-  is_trashed: boolean;
+  /** 0/1 — bound as a real SQLite integer, never a JS boolean (see
+   * `SqlParam` in `lib/db/db.ts`). */
+  is_unread: 0 | 1;
+  is_trashed: 0 | 1;
   list_unsubscribe: string | null;
   list_unsubscribe_post: string | null;
 }

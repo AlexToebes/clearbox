@@ -1,5 +1,5 @@
 import Database from "@tauri-apps/plugin-sql";
-import type { Db } from "@/lib/db/db";
+import type { Db, SqlParam } from "@/lib/db/db";
 
 /**
  * Opens (and, via `tauri-plugin-sql`'s configured migrations, migrates) the
@@ -11,8 +11,8 @@ export async function openDatabase(): Promise<Db> {
   const database = await Database.load("sqlite:clearbox.db");
 
   return {
-    execute: (sql, params) => database.execute(sql, params),
-    select: <T>(sql: string, params?: unknown[]) =>
+    execute: (sql, params?: SqlParam[]) => database.execute(sql, params),
+    select: <T>(sql: string, params?: SqlParam[]) =>
       database.select<T[]>(sql, params),
   };
 }
