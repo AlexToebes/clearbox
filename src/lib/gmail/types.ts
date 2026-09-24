@@ -24,3 +24,15 @@ export interface GmailMessage {
   sizeEstimate: number;
   payload?: GmailMessagePayload;
 }
+
+/**
+ * Response shape of `users.getProfile`.
+ *
+ * https://developers.google.com/gmail/api/reference/rest/v1/users/getProfile
+ */
+export interface GmailProfile {
+  emailAddress: string;
+  messagesTotal: number;
+  threadsTotal: number;
+  historyId: string;
+}
