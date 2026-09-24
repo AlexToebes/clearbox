@@ -44,8 +44,14 @@ jobs:
         with:
           workspaces: src-tauri -> target
 
-      - name: Create empty frontendDist
-        run: mkdir -p dist
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
 
       - name: cargo fmt --check
         working-directory: src-tauri
@@ -54,3 +60,6 @@ jobs:
       - name: cargo clippy
         working-directory: src-tauri
         run: cargo clippy --all-targets -- -D warnings
+
+      - name: pnpm tauri build
+        run: pnpm tauri build --debug --no-bundle
