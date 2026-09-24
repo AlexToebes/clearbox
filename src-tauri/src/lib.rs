@@ -1,5 +1,7 @@
 use tauri_plugin_sql::{Migration, MigrationKind};
 
+mod keychain;
+
 fn migrations() -> Vec<Migration> {
     vec![Migration {
         version: 1,
@@ -18,6 +20,11 @@ pub fn run() {
                 .add_migrations("sqlite:clearbox.db", migrations())
                 .build(),
         )
+        .invoke_handler(tauri::generate_handler![
+            keychain::secret_get,
+            keychain::secret_set,
+            keychain::secret_delete,
+        ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
