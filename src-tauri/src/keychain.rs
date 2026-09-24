@@ -73,3 +73,86 @@ pub async fn secret_delete(key: String) -> Result<(), String> {
     .await
     .map_err(|err| err.to_string())?
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    /// A key unlikely to collide with another run of this test (or a real
+    /// secret), so it's safe to run against a real OS keychain.
+    fn unique_test_key() -> String {
+        let pid = std::process::id();
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock is before the epoch")
+            .as_nanos();
+        format!("clearbox_keychain_test_{pid}_{now}")
+    }
+
+    /// Round-trips a secret through the real OS keychain via the three
+    /// Tauri commands. Needs a working Secret Service (Linux), Keychain
+    /// (macOS), or Credential Manager (Windows) — run with `--ignored`, and
+    /// on Linux inside a D-Bus session with a keyring unlocked, e.g.:
+    ///
+    /// ```sh
+    /// dbus-run-session -- bash -c \
+    ///   "printf '' | gnome-keyring-daemon --unlock --components=secrets >/dev/null; \
+    ///    cargo test keychain -- --include-ignored"
+    /// ```
+    #[test]
+    #[ignore = "needs an OS keychain (run with --ignored)"]
+    fn round_trips_a_secret_through_the_os_keychain() {
+        let key = unique_test_key();
+
+        assert_eq!(
+            tauri::async_runtime::block_on(secret_get(key.clone())),
+            Ok(None),
+            "no value should be stored yet",
+        );
+
+        assert_eq!(
+            tauri::async_runtime::block_on(secret_set(key.clone(), "value".to_string())),
+            Ok(()),
+        );
+
+        assert_eq!(
+            tauri::async_runtime::block_on(secret_get(key.clone())),
+            Ok(Some("value".to_string())),
+        );
+
+        assert_eq!(
+            tauri::async_runtime::block_on(secret_delete(key.clone())),
+            Ok(()),
+        );
+
+        assert_eq!(
+            tauri::async_runtime::block_on(secret_get(key.clone())),
+            Ok(None),
+            "value should be gone after delete",
+        );
+
+        // Deleting an already-absent entry is idempotent, not an error.
+        assert_eq!(tauri::async_runtime::block_on(secret_delete(key)), Ok(()));
+    }
+
+    /// Doesn't touch the OS keychain, so it runs by default (not
+    /// `#[ignore]`d) along with the rest of the suite.
+    #[test]
+    fn rejects_an_empty_key() {
+        let empty = String::new();
+
+        assert_eq!(
+            tauri::async_runtime::block_on(secret_get(empty.clone())),
+            Err("key must not be empty".to_string()),
+        );
+        assert_eq!(
+            tauri::async_runtime::block_on(secret_set(empty.clone(), "value".to_string())),
+            Err("key must not be empty".to_string()),
+        );
+        assert_eq!(
+            tauri::async_runtime::block_on(secret_delete(empty)),
+            Err("key must not be empty".to_string()),
+        );
+    }
+}

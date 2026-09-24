@@ -75,6 +75,10 @@ Other scripts:
 | `pnpm format:check` | Prettier, check only              |
 | `pnpm build`        | Typecheck + production Vite build |
 
+`src-tauri/src/keychain.rs` has a round-trip test that talks to the real OS
+keychain; it's `#[ignore]`d by default, so run it explicitly with
+`cd src-tauri && cargo test -- --ignored`.
+
 ## Roadmap
 
 Clearbox is built issue by issue — see the
