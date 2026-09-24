@@ -98,6 +98,36 @@ async function waitForCalls(
   );
 }
 
+/**
+ * A fetch stub whose `/token` response is controlled by the test, via a
+ * returned `resolveToken`. Used to land a refresh's fetch resolution at a
+ * precise point relative to another call (e.g. `signOut()`).
+ */
+function createDeferredTokenFetch(): {
+  fetch: typeof globalThis.fetch;
+  resolveToken: (body: Record<string, unknown>) => void;
+} {
+  let resolvePending!: (response: Response) => void;
+  const pending = new Promise<Response>((resolve) => {
+    resolvePending = resolve;
+  });
+
+  const fetch = vi.fn((input: string): Promise<Response> => {
+    if (input.includes("/token")) {
+      return pending;
+    }
+    if (input.includes("/revoke")) {
+      return Promise.resolve(new Response(null, { status: 200 }));
+    }
+    throw new Error(`unexpected fetch: ${input}`);
+  }) as unknown as typeof globalThis.fetch;
+
+  return {
+    fetch,
+    resolveToken: (body) => resolvePending(jsonResponse(200, body)),
+  };
+}
+
 function tokenBody(overrides: Record<string, unknown> = {}) {
   return {
     access_token: "access-1",
@@ -286,6 +316,77 @@ describe("signIn", () => {
   });
 });
 
+describe("signIn cancellation", () => {
+  it("rejects immediately with cancelled when the signal is already aborted, without starting a listener", async () => {
+    const deps = baseDeps();
+    const session = createAuthSession(deps);
+    const controller = new AbortController();
+    controller.abort();
+
+    await expect(
+      session.signIn({ signal: controller.signal }),
+    ).rejects.toMatchObject({ code: "cancelled" });
+    expect(deps.startLoopbackListener).not.toHaveBeenCalled();
+    expect(session.status()).toBe("signed_out");
+  });
+
+  it("aborting while waiting for the redirect closes the listener, rejects with cancelled, stores no tokens, and frees signIn() to start again", async () => {
+    const listener = createFakeListener();
+    const secrets = createTestSecretStore();
+    const deps = baseDeps({ listener, secrets });
+    const session = createAuthSession(deps);
+    const controller = new AbortController();
+
+    const first = session.signIn({ signal: controller.signal });
+    await waitForCalls(deps.openUrl);
+
+    controller.abort();
+
+    await expect(first).rejects.toMatchObject({ code: "cancelled" });
+    expect(listener.closeCalls()).toBe(1);
+    expect(session.status()).toBe("signed_out");
+    await expect(secrets.get("google_refresh_token")).resolves.toBeNull();
+
+    // signInInFlight must have been cleared: a new signIn() starts right away.
+    const listener2 = createFakeListener();
+    vi.mocked(deps.startLoopbackListener).mockResolvedValue(listener2);
+    const second = session.signIn();
+    await waitForCalls(deps.openUrl, 2);
+    const state = new URL(
+      vi.mocked(deps.openUrl).mock.calls[1]![0],
+    ).searchParams.get("state")!;
+    listener2.emit(`http://127.0.0.1:9999/?state=${state}&code=auth-code`);
+    await second;
+    expect(session.status()).toBe("signed_in");
+  });
+
+  it("a redirect that arrives after cancel does not sign in", async () => {
+    const listener = createFakeListener();
+    const secrets = createTestSecretStore();
+    const deps = baseDeps({ listener, secrets });
+    const session = createAuthSession(deps);
+    const controller = new AbortController();
+
+    const first = session.signIn({ signal: controller.signal });
+    await waitForCalls(deps.openUrl);
+    const state = new URL(
+      vi.mocked(deps.openUrl).mock.calls[0]![0],
+    ).searchParams.get("state")!;
+
+    controller.abort();
+    await expect(first).rejects.toMatchObject({ code: "cancelled" });
+
+    // The redirect shows up late, after the user already cancelled.
+    listener.emit(`http://127.0.0.1:9999/?state=${state}&code=auth-code`);
+    // Let the orphaned background flow (parseRedirect -> exchangeCode) run
+    // to completion; its result must not be applied to the session.
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(session.status()).toBe("signed_out");
+    await expect(secrets.get("google_refresh_token")).resolves.toBeNull();
+  });
+});
+
 describe("restore", () => {
   it("goes signed_in without a network call when a refresh token is stored", async () => {
     const secrets = createTestSecretStore();
@@ -379,6 +480,50 @@ describe("getAccessToken", () => {
     });
     expect(session.status()).toBe("signed_out");
     await expect(secrets.get("google_refresh_token")).resolves.toBeNull();
+  });
+
+  it("stores a rotated refresh_token when the refresh response includes one", async () => {
+    const secrets = createTestSecretStore();
+    await secrets.set("google_refresh_token", "old-refresh");
+    const { fetch } = createFakeFetch({
+      token: () =>
+        jsonResponse(200, tokenBody({ refresh_token: "rotated-refresh" })),
+    });
+    const session = createAuthSession(baseDeps({ secrets, fetch }));
+    await session.restore();
+
+    await expect(session.getAccessToken()).resolves.toBe("access-1");
+    await expect(secrets.get("google_refresh_token")).resolves.toBe(
+      "rotated-refresh",
+    );
+  });
+
+  it("discards a refresh that resolves after signOut(): rejects not_signed_in and caches nothing", async () => {
+    const secrets = createTestSecretStore();
+    await secrets.set("google_refresh_token", "refresh-1");
+    const { fetch, resolveToken } = createDeferredTokenFetch();
+    const session = createAuthSession(baseDeps({ secrets, fetch }));
+    await session.restore();
+
+    const pendingAccessToken = session.getAccessToken();
+
+    await session.signOut();
+    expect(session.status()).toBe("signed_out");
+
+    // The refresh's fetch only resolves now, after signOut() already ran.
+    resolveToken(tokenBody());
+
+    await expect(pendingAccessToken).rejects.toMatchObject({
+      code: "not_signed_in",
+    });
+    expect(session.status()).toBe("signed_out");
+    await expect(secrets.get("google_refresh_token")).resolves.toBeNull();
+
+    // No token was cached from the stale refresh: a fresh call still needs
+    // a real sign-in, not just a network round trip.
+    await expect(session.getAccessToken()).rejects.toMatchObject({
+      code: "not_signed_in",
+    });
   });
 
   it("invalidateAccessToken forces the next call to refresh", async () => {

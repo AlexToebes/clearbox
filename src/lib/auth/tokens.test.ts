@@ -91,6 +91,29 @@ describe("exchangeCode", () => {
     ).rejects.toMatchObject({ code: "insufficient_scope" });
   });
 
+  it("throws OAuthError('insufficient_scope') when the authorization_code response omits scope entirely", async () => {
+    const fetch = fakeFetch(
+      jsonResponse(200, {
+        access_token: "access-1",
+        expires_in: 3600,
+        refresh_token: "refresh-1",
+        // no `scope` field at all
+      }),
+    );
+
+    await expect(
+      exchangeCode({
+        fetch,
+        now,
+        clientId: "c",
+        clientSecret: "s",
+        code: "code",
+        codeVerifier: "verifier",
+        redirectUri: "http://127.0.0.1:5555",
+      }),
+    ).rejects.toMatchObject({ code: "insufficient_scope" });
+  });
+
   it("throws when the response is missing access_token or expires_in", async () => {
     const fetch = fakeFetch(jsonResponse(200, { scope: GMAIL_SCOPE }));
 
@@ -205,6 +228,51 @@ describe("refreshAccessToken", () => {
       client_secret: "secret-1",
       refresh_token: "refresh-1",
     });
+  });
+
+  it("accepts a refresh response that omits scope entirely (Google routinely does this)", async () => {
+    const fetch = fakeFetch(
+      jsonResponse(200, {
+        access_token: "access-2",
+        expires_in: 1800,
+        // no `scope` field — must not be treated as insufficient_scope.
+      }),
+    );
+
+    const result = await refreshAccessToken({
+      fetch,
+      now,
+      clientId: "c",
+      clientSecret: "s",
+      refreshToken: "refresh-1",
+    });
+
+    expect(result).toEqual({
+      accessToken: "access-2",
+      expiresAt: NOW + 1_800_000,
+      refreshToken: undefined,
+      scope: undefined,
+    });
+  });
+
+  it("still enforces GMAIL_SCOPE when a refresh response does include scope", async () => {
+    const fetch = fakeFetch(
+      jsonResponse(200, {
+        access_token: "access-2",
+        expires_in: 1800,
+        scope: "https://www.googleapis.com/auth/userinfo.email",
+      }),
+    );
+
+    await expect(
+      refreshAccessToken({
+        fetch,
+        now,
+        clientId: "c",
+        clientSecret: "s",
+        refreshToken: "refresh-1",
+      }),
+    ).rejects.toMatchObject({ code: "insufficient_scope" });
   });
 
   it("throws OAuthError('invalid_grant') for a revoked/expired refresh token", async () => {

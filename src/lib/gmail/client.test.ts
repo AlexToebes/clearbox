@@ -178,6 +178,72 @@ describe("getProfile", () => {
     expect(delays).toEqual([5000]);
   });
 
+  it("honors a Retry-After header (HTTP-date), computed against the injected clock", async () => {
+    const nowMs = Date.parse("Wed, 21 Oct 2015 07:28:00 GMT");
+    const { fetch } = createQueueFetch([
+      errorResponse(503, undefined, "Service Unavailable", {
+        "Retry-After": "Wed, 21 Oct 2015 07:28:10 GMT",
+      }),
+      jsonResponse(200, PROFILE_BODY),
+    ]);
+    const { sleep, delays } = recordingSleep();
+
+    const client = createGmailClient({
+      fetch,
+      getAccessToken: vi.fn().mockResolvedValue("token"),
+      invalidateAccessToken: vi.fn(),
+      sleep,
+      random: () => 1,
+      now: () => nowMs,
+    });
+
+    await expect(client.getProfile()).resolves.toEqual(PROFILE_BODY);
+    expect(delays).toEqual([10_000]);
+  });
+
+  it("falls back to jittered backoff for an unparseable Retry-After (never NaN/hot-loops)", async () => {
+    const { fetch } = createQueueFetch([
+      errorResponse(503, undefined, "Service Unavailable", {
+        "Retry-After": "not-a-valid-header-value",
+      }),
+      jsonResponse(200, PROFILE_BODY),
+    ]);
+    const { sleep, delays } = recordingSleep();
+
+    const client = createGmailClient({
+      fetch,
+      getAccessToken: vi.fn().mockResolvedValue("token"),
+      invalidateAccessToken: vi.fn(),
+      sleep,
+      random: () => 1,
+    });
+
+    await expect(client.getProfile()).resolves.toEqual(PROFILE_BODY);
+    // Falls back to backoffDelayMs(0) = min(32000, 1000) * 1, not NaN/0.
+    expect(delays).toEqual([1000]);
+  });
+
+  it("clamps an overly long Retry-After to MAX_BACKOFF_MS", async () => {
+    const { fetch } = createQueueFetch([
+      errorResponse(503, undefined, "Service Unavailable", {
+        "Retry-After": "99999",
+      }),
+      jsonResponse(200, PROFILE_BODY),
+    ]);
+    const { sleep, delays } = recordingSleep();
+
+    const client = createGmailClient({
+      fetch,
+      getAccessToken: vi.fn().mockResolvedValue("token"),
+      invalidateAccessToken: vi.fn(),
+      sleep,
+      random: () => 1,
+    });
+
+    await expect(client.getProfile()).resolves.toEqual(PROFILE_BODY);
+    expect(delays).toEqual([32_000]);
+  });
+
   it("retries a 403 reason: rateLimitExceeded", async () => {
     const { fetch } = createQueueFetch([
       errorResponse(403, "userRateLimitExceeded"),

@@ -52,6 +52,9 @@ export interface GmailClientDeps {
   /** Source of randomness for full-jitter backoff. Defaults to
    * `Math.random`; tests inject a fixed value to assert exact delays. */
   random?: () => number;
+  /** Clock used to turn an HTTP-date `Retry-After` header into a delay.
+   * Defaults to `Date.now`. */
+  now?: () => number;
 }
 
 export interface GmailClient {
@@ -98,11 +101,46 @@ function isRetryable(status: number, reason: string | undefined): boolean {
   );
 }
 
+/**
+ * Parses a `Retry-After` header (RFC 9110 §10.2.3) into a delay in
+ * milliseconds: either `delta-seconds` (an unsigned integer, e.g. `"120"`)
+ * or an HTTP-date (e.g. `"Wed, 21 Oct 2015 07:28:00 GMT"`), in which case
+ * the delay is `date - now()`. Returns `null` — meaning "fall back to the
+ * computed backoff" — when the header is absent, isn't valid in either
+ * form, or names a date that's already in the past (a negative delay).
+ *
+ * `Number("Wed, 21 Oct …")` is `NaN`, and `setTimeout(fn, NaN)` fires on
+ * the next tick — silently turning a rate-limit response into a hot retry
+ * loop — so the delta-seconds form is matched explicitly rather than
+ * handed straight to `Number()`.
+ */
+function parseRetryAfterMs(
+  header: string | null,
+  now: () => number,
+): number | null {
+  if (header === null) {
+    return null;
+  }
+
+  const trimmed = header.trim();
+  if (/^\d+$/.test(trimmed)) {
+    return Number(trimmed) * 1000;
+  }
+
+  const dateMs = Date.parse(trimmed);
+  if (Number.isNaN(dateMs)) {
+    return null;
+  }
+  const delayMs = dateMs - now();
+  return delayMs >= 0 ? delayMs : null;
+}
+
 /** Creates a `GmailClient` backed by `deps`. */
 export function createGmailClient(deps: GmailClientDeps): GmailClient {
   const sleep = deps.sleep ?? defaultSleep;
   const maxRetries = deps.maxRetries ?? DEFAULT_MAX_RETRIES;
   const random = deps.random ?? Math.random;
+  const now = deps.now ?? Date.now;
 
   /** Exponential backoff with full jitter: a uniform random delay between
    * 0 and `min(MAX_BACKOFF_MS, BASE_BACKOFF_MS * 2^retriesSoFar)`. */
@@ -136,10 +174,14 @@ export function createGmailClient(deps: GmailClientDeps): GmailClient {
       const { message, reason } = await readErrorBody(response);
 
       if (isRetryable(response.status, reason) && retries < maxRetries) {
-        const retryAfter = response.headers.get("Retry-After");
-        const delayMs = retryAfter
-          ? Number(retryAfter) * 1000
-          : backoffDelayMs(retries);
+        const retryAfterMs = parseRetryAfterMs(
+          response.headers.get("Retry-After"),
+          now,
+        );
+        const delayMs =
+          retryAfterMs !== null
+            ? Math.min(retryAfterMs, MAX_BACKOFF_MS)
+            : backoffDelayMs(retries);
         retries += 1;
         await sleep(delayMs);
         continue;
