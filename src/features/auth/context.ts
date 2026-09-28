@@ -17,6 +17,9 @@ export interface AuthContextValue {
    * keychain being unavailable. `null` otherwise, including while restore
    * is still pending. */
   restoreError: unknown;
+  /** Cancels any in-progress scan, clears the local mail cache, then signs
+   * out (`Services.signOutAndClear`). A no-op when `status === "no_config"`. */
+  signOutAndClear: () => Promise<void>;
 }
 
 export const NO_CONFIG_VALUE: AuthContextValue = {
@@ -24,6 +27,7 @@ export const NO_CONFIG_VALUE: AuthContextValue = {
   auth: null,
   gmail: null,
   restoreError: null,
+  signOutAndClear: () => Promise.resolve(),
 };
 
 export const AuthContext = createContext<AuthContextValue | null>(null);

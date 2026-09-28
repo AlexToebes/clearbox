@@ -40,7 +40,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     if (!services) {
       return NO_CONFIG_VALUE;
     }
-    return { status, auth: services.auth, gmail: services.gmail, restoreError };
+    return {
+      status,
+      auth: services.auth,
+      gmail: services.gmail,
+      restoreError,
+      signOutAndClear: services.signOutAndClear,
+    };
   }, [services, status, restoreError]);
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

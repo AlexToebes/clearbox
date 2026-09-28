@@ -25,7 +25,7 @@ type ProfileState =
  * (issue #6).
  */
 export function SignedInCard() {
-  const { auth, gmail } = useAuth();
+  const { gmail, signOutAndClear } = useAuth();
   const [profileState, setProfileState] = useState<ProfileState>({
     kind: "loading",
   });
@@ -65,13 +65,10 @@ export function SignedInCard() {
   }, [gmail]);
 
   async function handleSignOut(): Promise<void> {
-    if (!auth) {
-      return;
-    }
     setSigningOut(true);
     try {
-      await auth.signOut();
-      toast("Signed out.");
+      await signOutAndClear();
+      toast("Signed out. Local mail data removed from this computer.");
     } finally {
       setSigningOut(false);
     }
