@@ -1,21 +1,21 @@
 import { useEffect, useState } from "react";
 import { getServices } from "@/app/services";
 import { useScan } from "@/features/sync/useScan";
-import { loadDashboard, type DashboardData } from "@/lib/dashboard/data";
+import {
+  loadDashboard,
+  type DashboardBarMetric,
+  type DashboardData,
+} from "@/lib/dashboard/data";
 import type { SenderGroupBy } from "@/lib/db/queries";
 import { SegmentedControl } from "./SegmentedControl";
 import { ShareDonut } from "./ShareDonut";
 import { StatTiles } from "./StatTiles";
+import { TopSendersChart } from "./TopSendersChart";
 
 const GROUP_BY_OPTIONS: { value: SenderGroupBy; label: string }[] = [
   { value: "email", label: "Senders" },
   { value: "domain", label: "Domains" },
 ];
-
-// The top-senders bar chart's metric toggle (Messages/Storage/Unread) is
-// added in a later commit; until then the chart it will drive doesn't
-// exist yet, so `loadDashboard` is always asked for the "count" ranking.
-const DEFAULT_BAR_METRIC = "count";
 
 /** Simple muted blocks standing in for each card while the first load is
  * in flight — sized to roughly match the layout they'll be replaced by. */
@@ -30,6 +30,7 @@ function DashboardSkeleton() {
       </div>
       <div className="grid gap-4 lg:grid-cols-5">
         <div className="bg-muted h-80 animate-pulse rounded-xl lg:col-span-2" />
+        <div className="bg-muted h-80 animate-pulse rounded-xl lg:col-span-3" />
       </div>
     </div>
   );
@@ -46,6 +47,7 @@ function DashboardSkeleton() {
 export function Dashboard() {
   const { dataVersion, status, run } = useScan();
   const [groupBy, setGroupBy] = useState<SenderGroupBy>("email");
+  const [barMetric, setBarMetric] = useState<DashboardBarMetric>("count");
   const [data, setData] = useState<DashboardData | null>(null);
 
   useEffect(() => {
@@ -57,13 +59,7 @@ export function Dashboard() {
 
     services
       .getDb()
-      .then((db) =>
-        loadDashboard(db, {
-          groupBy,
-          barMetric: DEFAULT_BAR_METRIC,
-          now: Date.now(),
-        }),
-      )
+      .then((db) => loadDashboard(db, { groupBy, barMetric, now: Date.now() }))
       .then((result) => {
         if (!cancelled) {
           setData(result);
@@ -77,7 +73,7 @@ export function Dashboard() {
     return () => {
       cancelled = true;
     };
-  }, [dataVersion, groupBy]);
+  }, [dataVersion, groupBy, barMetric]);
 
   if (data === null) {
     return <DashboardSkeleton />;
@@ -108,6 +104,14 @@ export function Dashboard() {
       <div className="grid gap-4 lg:grid-cols-5">
         <div className="lg:col-span-2">
           <ShareDonut share={data.share} groupBy={groupBy} />
+        </div>
+        <div className="lg:col-span-3">
+          <TopSendersChart
+            senders={data.topSenders}
+            groupBy={groupBy}
+            barMetric={barMetric}
+            onBarMetricChange={setBarMetric}
+          />
         </div>
       </div>
     </div>
