@@ -1,14 +1,26 @@
 /**
  * Authorized Gmail REST client: adds the bearer token to every request,
  * retries once (after refreshing) on a 401, and retries with exponential
- * backoff (full jitter) on 429s, 5xxs and rate-limited 403s. See "Sync" in
- * `docs/ARCHITECTURE.md`.
+ * backoff (full jitter) on 429s, 5xxs and rate-limited 403s. Every attempt
+ * (including retries) first acquires quota from a token-bucket rate
+ * limiter, so a full mailbox scan stays under Gmail's per-user quota. See
+ * "Sync" in `docs/ARCHITECTURE.md`.
  *
- * Only `getProfile` is implemented here; `messages.list`/`get`/
- * `batchModify` land with issue #4.
+ * `messages.batchModify` lands with issue #8/#9.
  */
 
-import type { GmailProfile } from "./types";
+import {
+  DEFAULT_GMAIL_UNITS_PER_SECOND,
+  GMAIL_QUOTA_UNITS,
+  createRateLimiter,
+  sleepAbortable,
+  type RateLimiter,
+} from "./rateLimiter";
+import type {
+  GmailMessage,
+  GmailMessageListResponse,
+  GmailProfile,
+} from "./types";
 
 const BASE_URL = "https://gmail.googleapis.com/gmail/v1/users/me";
 
@@ -55,12 +67,42 @@ export interface GmailClientDeps {
   /** Clock used to turn an HTTP-date `Retry-After` header into a delay.
    * Defaults to `Date.now`. */
   now?: () => number;
+  /** Defaults to a token bucket at `DEFAULT_GMAIL_UNITS_PER_SECOND`, using
+   * the real clock and `setTimeout`. Tests inject a fake (or a recording
+   * one) to assert exactly what quota each call acquires. */
+  rateLimiter?: RateLimiter;
+}
+
+export interface ListMessageIdsOptions {
+  /** Continues a previous `listMessageIds` call. */
+  pageToken?: string;
+  /** Results per page. Defaults to 500, Gmail's own per-page maximum. */
+  maxResults?: number;
+  signal?: AbortSignal;
+}
+
+export interface ListMessageIdsResult {
+  ids: string[];
+  /** `null` once the last page has been reached. */
+  nextPageToken: string | null;
+  resultSizeEstimate: number;
 }
 
 export interface GmailClient {
   /** `GET /profile`: the signed-in account's address and message/thread
    * counts. */
-  getProfile(): Promise<GmailProfile>;
+  getProfile(signal?: AbortSignal): Promise<GmailProfile>;
+  /** `GET /messages`: one page of message ids in the mailbox (excluding
+   * Spam/Trash). Used to enumerate the mailbox for a full scan. */
+  listMessageIds(opts?: ListMessageIdsOptions): Promise<ListMessageIdsResult>;
+  /** `GET /messages/{id}?format=metadata`: the headers, labels, size and
+   * date Clearbox caches for one message (see "Metadata only" in
+   * `docs/ARCHITECTURE.md`). Returns `null` on a 404 — the message was
+   * deleted after it was listed. */
+  getMessageMetadata(
+    id: string,
+    signal?: AbortSignal,
+  ): Promise<GmailMessage | null>;
 }
 
 function defaultSleep(ms: number): Promise<void> {
@@ -141,6 +183,13 @@ export function createGmailClient(deps: GmailClientDeps): GmailClient {
   const maxRetries = deps.maxRetries ?? DEFAULT_MAX_RETRIES;
   const random = deps.random ?? Math.random;
   const now = deps.now ?? Date.now;
+  const rateLimiter =
+    deps.rateLimiter ??
+    createRateLimiter({
+      unitsPerSecond: DEFAULT_GMAIL_UNITS_PER_SECOND,
+      now: Date.now,
+      sleep: defaultSleep,
+    });
 
   /** Exponential backoff with full jitter: a uniform random delay between
    * 0 and `min(MAX_BACKOFF_MS, BASE_BACKOFF_MS * 2^retriesSoFar)`. */
@@ -149,15 +198,30 @@ export function createGmailClient(deps: GmailClientDeps): GmailClient {
     return random() * cap;
   }
 
-  async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
+  /**
+   * Makes one logical API call, transparently handling the 401-refresh and
+   * retryable-error-backoff loops. `units` is the call's Gmail quota cost
+   * (`GMAIL_QUOTA_UNITS`); quota is acquired before every attempt,
+   * including retries, so a slow patch of backoff doesn't let a burst of
+   * *other* calls blow through the budget while this one waits.
+   */
+  async function request<T>(
+    path: string,
+    units: number,
+    init: RequestInit = {},
+    signal?: AbortSignal,
+  ): Promise<T> {
     let token = await deps.getAccessToken();
     let usedUnauthorizedRetry = false;
     let retries = 0;
 
     for (;;) {
+      await rateLimiter.acquire(units, signal);
+
       const response = await deps.fetch(`${BASE_URL}${path}`, {
         ...init,
         headers: { ...init.headers, Authorization: `Bearer ${token}` },
+        signal,
       });
 
       if (response.ok) {
@@ -183,7 +247,7 @@ export function createGmailClient(deps: GmailClientDeps): GmailClient {
             ? Math.min(retryAfterMs, MAX_BACKOFF_MS)
             : backoffDelayMs(retries);
         retries += 1;
-        await sleep(delayMs);
+        await sleepAbortable(sleep, delayMs, signal);
         continue;
       }
 
@@ -191,7 +255,66 @@ export function createGmailClient(deps: GmailClientDeps): GmailClient {
     }
   }
 
+  async function getMessageMetadata(
+    id: string,
+    signal?: AbortSignal,
+  ): Promise<GmailMessage | null> {
+    const params = new URLSearchParams({ format: "metadata" });
+    for (const header of [
+      "From",
+      "Subject",
+      "List-Unsubscribe",
+      "List-Unsubscribe-Post",
+    ]) {
+      params.append("metadataHeaders", header);
+    }
+
+    try {
+      return await request<GmailMessage>(
+        `/messages/${encodeURIComponent(id)}?${params.toString()}`,
+        GMAIL_QUOTA_UNITS.messagesGet,
+        {},
+        signal,
+      );
+    } catch (err) {
+      if (err instanceof GmailApiError && err.status === 404) {
+        return null;
+      }
+      throw err;
+    }
+  }
+
   return {
-    getProfile: () => request<GmailProfile>("/profile"),
+    getProfile: (signal?: AbortSignal) =>
+      request<GmailProfile>(
+        "/profile",
+        GMAIL_QUOTA_UNITS.getProfile,
+        {},
+        signal,
+      ),
+
+    listMessageIds: async (opts: ListMessageIdsOptions = {}) => {
+      const params = new URLSearchParams();
+      params.set("maxResults", String(opts.maxResults ?? 500));
+      if (opts.pageToken !== undefined) {
+        params.set("pageToken", opts.pageToken);
+      }
+      params.set("includeSpamTrash", "false");
+
+      const response = await request<GmailMessageListResponse>(
+        `/messages?${params.toString()}`,
+        GMAIL_QUOTA_UNITS.messagesList,
+        {},
+        opts.signal,
+      );
+
+      return {
+        ids: (response.messages ?? []).map((m) => m.id),
+        nextPageToken: response.nextPageToken ?? null,
+        resultSizeEstimate: response.resultSizeEstimate,
+      };
+    },
+
+    getMessageMetadata,
   };
 }

@@ -50,8 +50,9 @@ export interface RateLimiter {
 
 /** Resolves after `ms` (via `sleep`), or rejects with `signal.reason` if
  * `signal` aborts first. Never leaves a dangling abort listener once
- * settled either way. */
-function sleepAbortable(
+ * settled either way. Shared with `gmail/client.ts`, whose retry backoff
+ * needs the same abort-while-sleeping behavior. */
+export function sleepAbortable(
   sleep: (ms: number) => Promise<void>,
   ms: number,
   signal: AbortSignal | undefined,

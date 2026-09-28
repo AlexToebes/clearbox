@@ -36,3 +36,15 @@ export interface GmailProfile {
   threadsTotal: number;
   historyId: string;
 }
+
+/**
+ * Response shape of `users.messages.list`. The API omits `messages`
+ * entirely (rather than returning `[]`) when there are no results.
+ *
+ * https://developers.google.com/gmail/api/reference/rest/v1/users.messages/list
+ */
+export interface GmailMessageListResponse {
+  messages?: { id: string; threadId: string }[];
+  nextPageToken?: string;
+  resultSizeEstimate: number;
+}
