@@ -84,7 +84,7 @@ function ShareLegend({
   total: number;
 }) {
   return (
-    <ul className="flex min-w-0 flex-1 flex-col gap-2">
+    <ul className="flex w-full min-w-0 flex-1 flex-col gap-2">
       {segments.map((segment) => (
         <li key={segment.key} className="flex items-center gap-2 text-sm">
           <span
@@ -136,8 +136,8 @@ export function ShareDonut({
         <CardTitle>Where your mail comes from</CardTitle>
         <CardDescription>Share of messages, top 4 {noun}</CardDescription>
       </CardHeader>
-      <CardContent className="flex flex-col items-center gap-4 sm:flex-row">
-        <div className="relative aspect-square w-full max-w-[200px] shrink-0">
+      <CardContent className="flex flex-col items-center gap-4 sm:flex-row lg:flex-col">
+        <div className="relative aspect-square w-full max-w-[200px] shrink-0 lg:mx-auto">
           <ChartContainer config={chartConfig} className="aspect-square">
             <PieChart>
               <ChartTooltip

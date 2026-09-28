@@ -20,6 +20,7 @@ import {
   ChartTooltip,
   type ChartConfig,
 } from "@/components/ui/chart";
+import { niceTicks } from "@/lib/chartScale";
 import type { DashboardMonth } from "@/lib/dashboard/data";
 import { formatMonthLabel } from "@/lib/format";
 import { SegmentedControl } from "./SegmentedControl";
@@ -37,7 +38,20 @@ const chartConfig: ChartConfig = {
  * don't collide. */
 const X_TICK_INTERVAL = 2;
 
-function MonthlyTooltip({ active, payload }: TooltipProps<number, string>) {
+/** `monthly`'s last entry is always the UTC month containing "now" (see
+ * `zeroFillMonths` in `lib/dashboard/data.ts`) — i.e. a partial month,
+ * still filling up. Labelled "(so far)" so its shorter bar doesn't read
+ * as a drop-off. */
+function formatMonthCell(month: string, isCurrent: boolean): string {
+  const label = formatMonthLabel(month, true);
+  return isCurrent ? `${label} (so far)` : label;
+}
+
+function MonthlyTooltip({
+  active,
+  payload,
+  currentMonth,
+}: TooltipProps<number, string> & { currentMonth: string | null }) {
   if (!active || !payload || payload.length === 0) {
     return null;
   }
@@ -50,14 +64,20 @@ function MonthlyTooltip({ active, payload }: TooltipProps<number, string>) {
   return (
     <div className="border-border/50 bg-background rounded-lg border px-2.5 py-1.5 text-xs shadow-xl">
       <span className="text-foreground font-medium">
-        {formatMonthLabel(row.month, true)} — {row.count.toLocaleString()}{" "}
-        messages
+        {formatMonthCell(row.month, row.month === currentMonth)} —{" "}
+        {row.count.toLocaleString()} messages
       </span>
     </div>
   );
 }
 
-function MonthlyTable({ months }: { months: DashboardMonth[] }) {
+function MonthlyTable({
+  months,
+  currentMonth,
+}: {
+  months: DashboardMonth[];
+  currentMonth: string | null;
+}) {
   return (
     <div className="overflow-x-auto">
       <table className="w-full text-sm">
@@ -71,7 +91,7 @@ function MonthlyTable({ months }: { months: DashboardMonth[] }) {
           {months.map((month) => (
             <tr key={month.month} className="border-b last:border-0">
               <td className="py-2 pr-3">
-                {formatMonthLabel(month.month, true)}
+                {formatMonthCell(month.month, month.month === currentMonth)}
               </td>
               <td className="py-2 text-right tabular-nums">
                 {month.count.toLocaleString()}
@@ -88,6 +108,15 @@ function MonthlyTable({ months }: { months: DashboardMonth[] }) {
  * month, with a table view for the exact numbers. */
 export function MonthlyVolumeChart({ monthly }: { monthly: DashboardMonth[] }) {
   const [view, setView] = useState<"chart" | "table">("chart");
+  const currentMonth =
+    monthly.length > 0 ? monthly[monthly.length - 1]!.month : null;
+
+  const maxCount = monthly.reduce(
+    (max, month) => Math.max(max, month.count),
+    0,
+  );
+  const yTicks = niceTicks(maxCount);
+  const yMax = yTicks[yTicks.length - 1] ?? 1;
 
   return (
     <Card>
@@ -105,7 +134,7 @@ export function MonthlyVolumeChart({ monthly }: { monthly: DashboardMonth[] }) {
       </CardHeader>
       <CardContent>
         {view === "table" ? (
-          <MonthlyTable months={monthly} />
+          <MonthlyTable months={monthly} currentMonth={currentMonth} />
         ) : (
           <ChartContainer config={chartConfig} className="h-[260px] w-full">
             <BarChart
@@ -121,6 +150,8 @@ export function MonthlyVolumeChart({ monthly }: { monthly: DashboardMonth[] }) {
                 axisLine={false}
               />
               <YAxis
+                domain={[0, yMax]}
+                ticks={yTicks}
                 tickFormatter={(value: number) =>
                   Math.round(value).toLocaleString()
                 }
@@ -130,7 +161,7 @@ export function MonthlyVolumeChart({ monthly }: { monthly: DashboardMonth[] }) {
                 width={48}
               />
               <ChartTooltip
-                content={<MonthlyTooltip />}
+                content={<MonthlyTooltip currentMonth={currentMonth} />}
                 cursor={{ fill: "var(--muted)" }}
               />
               <Bar

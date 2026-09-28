@@ -51,6 +51,7 @@ export function Dashboard() {
   const [groupBy, setGroupBy] = useState<SenderGroupBy>("email");
   const [barMetric, setBarMetric] = useState<DashboardBarMetric>("count");
   const [data, setData] = useState<DashboardData | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     const services = getServices();
@@ -65,11 +66,20 @@ export function Dashboard() {
       .then((result) => {
         if (!cancelled) {
           setData(result);
+          setError(null);
         }
       })
-      .catch(() => {
-        // Leave the last-known data (or the skeleton) showing rather than
-        // erroring the whole shell over a re-query failure.
+      .catch((err: unknown) => {
+        // Log it, but otherwise leave the last-known data showing rather
+        // than erroring the whole shell over a re-query failure — unless
+        // there's no data yet, in which case the caller renders `error`
+        // instead of sitting on the skeleton forever.
+        console.error("Failed to load dashboard data", err);
+        if (!cancelled) {
+          setError(
+            err instanceof Error ? err.message : "Something went wrong.",
+          );
+        }
       });
 
     return () => {
@@ -78,6 +88,13 @@ export function Dashboard() {
   }, [dataVersion, groupBy, barMetric]);
 
   if (data === null) {
+    if (error !== null) {
+      return (
+        <p className="text-muted-foreground text-sm">
+          Couldn't load the dashboard: {error}
+        </p>
+      );
+    }
     return <DashboardSkeleton />;
   }
 

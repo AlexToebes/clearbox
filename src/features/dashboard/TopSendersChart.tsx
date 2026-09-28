@@ -11,7 +11,6 @@ import {
 } from "recharts";
 import {
   Card,
-  CardAction,
   CardContent,
   CardDescription,
   CardHeader,
@@ -147,8 +146,7 @@ function TopSendersTooltip({
 // always fits its card without a `<td>`'s intrinsic content width
 // starving its neighbors — the failure mode that squeezed the numeric
 // columns down to a few unreadable pixels.
-const NAME_COL_WIDTH = "24%";
-const EMAIL_COL_WIDTH = "26%";
+const SENDER_COL_WIDTH = "40%";
 const NUMERIC_COL_WIDTH = "12%";
 const DATE_COL_WIDTH = "16%";
 
@@ -163,8 +161,7 @@ function TopSendersTable({
     <div className="overflow-x-auto">
       <table className="w-full table-fixed text-sm">
         <colgroup>
-          <col style={{ width: NAME_COL_WIDTH }} />
-          <col style={{ width: EMAIL_COL_WIDTH }} />
+          <col style={{ width: SENDER_COL_WIDTH }} />
           <col style={{ width: NUMERIC_COL_WIDTH }} />
           <col style={{ width: NUMERIC_COL_WIDTH }} />
           <col style={{ width: NUMERIC_COL_WIDTH }} />
@@ -172,9 +169,8 @@ function TopSendersTable({
         </colgroup>
         <thead>
           <tr className="text-muted-foreground border-b text-left text-xs">
-            <th className="py-2 pr-3 font-normal">Name</th>
             <th className="py-2 pr-3 font-normal">
-              {groupBy === "domain" ? "Domain" : "Email"}
+              {groupBy === "domain" ? "Domain" : "Sender"}
             </th>
             <th className="py-2 pr-3 text-right font-normal">Messages</th>
             <th className="py-2 pr-3 text-right font-normal">Unread</th>
@@ -185,9 +181,13 @@ function TopSendersTable({
         <tbody>
           {senders.map((sender) => (
             <tr key={sender.key} className="border-b last:border-0">
-              <td className="truncate py-2 pr-3">{sender.displayName}</td>
-              <td className="text-muted-foreground truncate py-2 pr-3">
-                {sender.key}
+              <td className="py-2 pr-3">
+                <div className="truncate">{sender.displayName}</div>
+                {sender.key !== sender.displayName && (
+                  <div className="text-muted-foreground truncate text-xs">
+                    {sender.key}
+                  </div>
+                )}
               </td>
               <td className="py-2 pr-3 text-right whitespace-nowrap tabular-nums">
                 {sender.messageCount.toLocaleString()}
@@ -225,6 +225,7 @@ export function TopSendersChart({
 }) {
   const [view, setView] = useState<"chart" | "table">("chart");
   const noun = groupBy === "domain" ? "domains" : "senders";
+  const title = `Top ${noun}`;
 
   const chartData: ChartRow[] = senders.map((sender) => ({
     key: sender.key,
@@ -240,26 +241,28 @@ export function TopSendersChart({
   return (
     <Card className="h-full">
       <CardHeader>
-        <CardTitle>
-          Top {noun.charAt(0).toUpperCase() + noun.slice(1)}
-        </CardTitle>
-        <CardDescription>
-          Ranked by {METRIC_LABELS[barMetric].toLowerCase()}
-        </CardDescription>
-        <CardAction className="flex flex-col items-end gap-2">
-          <SegmentedControl
-            aria-label="Rank by"
-            options={METRIC_OPTIONS}
-            value={barMetric}
-            onChange={onBarMetricChange}
-          />
-          <SegmentedControl
-            aria-label="View"
-            options={VIEW_OPTIONS}
-            value={view}
-            onChange={setView}
-          />
-        </CardAction>
+        <div className="flex flex-wrap items-start justify-between gap-x-4 gap-y-2">
+          <div>
+            <CardTitle>{title}</CardTitle>
+            <CardDescription>
+              Ranked by {METRIC_LABELS[barMetric].toLowerCase()}
+            </CardDescription>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <SegmentedControl
+              aria-label="Rank by"
+              options={METRIC_OPTIONS}
+              value={barMetric}
+              onChange={onBarMetricChange}
+            />
+            <SegmentedControl
+              aria-label="View"
+              options={VIEW_OPTIONS}
+              value={view}
+              onChange={setView}
+            />
+          </div>
+        </div>
       </CardHeader>
       <CardContent>
         {view === "table" ? (
