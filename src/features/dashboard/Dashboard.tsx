@@ -4,6 +4,7 @@ import { useScan } from "@/features/sync/useScan";
 import { loadDashboard, type DashboardData } from "@/lib/dashboard/data";
 import type { SenderGroupBy } from "@/lib/db/queries";
 import { SegmentedControl } from "./SegmentedControl";
+import { ShareDonut } from "./ShareDonut";
 import { StatTiles } from "./StatTiles";
 
 const GROUP_BY_OPTIONS: { value: SenderGroupBy; label: string }[] = [
@@ -26,6 +27,9 @@ function DashboardSkeleton() {
         {Array.from({ length: 5 }, (_, i) => (
           <div key={i} className="bg-muted h-24 animate-pulse rounded-xl" />
         ))}
+      </div>
+      <div className="grid gap-4 lg:grid-cols-5">
+        <div className="bg-muted h-80 animate-pulse rounded-xl lg:col-span-2" />
       </div>
     </div>
   );
@@ -101,6 +105,11 @@ export function Dashboard() {
         )}
       </div>
       <StatTiles summary={data.summary} />
+      <div className="grid gap-4 lg:grid-cols-5">
+        <div className="lg:col-span-2">
+          <ShareDonut share={data.share} groupBy={groupBy} />
+        </div>
+      </div>
     </div>
   );
 }
