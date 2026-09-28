@@ -6,6 +6,7 @@ import {
   LabelList,
   XAxis,
   YAxis,
+  type LabelProps,
   type TooltipProps,
 } from "recharts";
 import {
@@ -66,6 +67,44 @@ function truncate(text: string, maxChars: number): string {
   return text.length > maxChars ? `${text.slice(0, maxChars - 1)}…` : text;
 }
 
+interface BarViewBox {
+  x?: number;
+  y?: number;
+  width?: number;
+  height?: number;
+}
+
+/**
+ * A tip label rendered manually (rather than via `LabelList`'s default
+ * text renderer) because that default wraps onto two lines for short
+ * bars — it treats the *bar's* width as the text's wrap width, which is
+ * far too narrow for a label meant to sit to the right of the bar.
+ */
+function renderValueLabel(metric: DashboardBarMetric) {
+  return function ValueLabel(props: LabelProps) {
+    const viewBox = props.viewBox as BarViewBox | undefined;
+    const x = viewBox?.x ?? 0;
+    const y = viewBox?.y ?? 0;
+    const width = viewBox?.width ?? 0;
+    const height = viewBox?.height ?? 0;
+    const value =
+      typeof props.value === "number" ? props.value : Number(props.value ?? 0);
+
+    return (
+      <text
+        x={x + width + 6}
+        y={y + height / 2}
+        dy={4}
+        textAnchor="start"
+        fontSize={12}
+        className="fill-muted-foreground"
+      >
+        {formatMetricValue(value, metric)}
+      </text>
+    );
+  };
+}
+
 interface ChartRow {
   key: string;
   displayName: string;
@@ -104,6 +143,15 @@ function TopSendersTooltip({
   );
 }
 
+// Fixed percentage widths (rather than per-cell `max-w`) so the table
+// always fits its card without a `<td>`'s intrinsic content width
+// starving its neighbors — the failure mode that squeezed the numeric
+// columns down to a few unreadable pixels.
+const NAME_COL_WIDTH = "24%";
+const EMAIL_COL_WIDTH = "26%";
+const NUMERIC_COL_WIDTH = "12%";
+const DATE_COL_WIDTH = "16%";
+
 function TopSendersTable({
   senders,
   groupBy,
@@ -113,7 +161,15 @@ function TopSendersTable({
 }) {
   return (
     <div className="overflow-x-auto">
-      <table className="w-full text-sm">
+      <table className="w-full table-fixed text-sm">
+        <colgroup>
+          <col style={{ width: NAME_COL_WIDTH }} />
+          <col style={{ width: EMAIL_COL_WIDTH }} />
+          <col style={{ width: NUMERIC_COL_WIDTH }} />
+          <col style={{ width: NUMERIC_COL_WIDTH }} />
+          <col style={{ width: NUMERIC_COL_WIDTH }} />
+          <col style={{ width: DATE_COL_WIDTH }} />
+        </colgroup>
         <thead>
           <tr className="text-muted-foreground border-b text-left text-xs">
             <th className="py-2 pr-3 font-normal">Name</th>
@@ -129,22 +185,20 @@ function TopSendersTable({
         <tbody>
           {senders.map((sender) => (
             <tr key={sender.key} className="border-b last:border-0">
-              <td className="max-w-[220px] truncate py-2 pr-3">
-                {sender.displayName}
-              </td>
-              <td className="text-muted-foreground max-w-[200px] truncate py-2 pr-3">
+              <td className="truncate py-2 pr-3">{sender.displayName}</td>
+              <td className="text-muted-foreground truncate py-2 pr-3">
                 {sender.key}
               </td>
-              <td className="py-2 pr-3 text-right tabular-nums">
+              <td className="py-2 pr-3 text-right whitespace-nowrap tabular-nums">
                 {sender.messageCount.toLocaleString()}
               </td>
-              <td className="py-2 pr-3 text-right tabular-nums">
+              <td className="py-2 pr-3 text-right whitespace-nowrap tabular-nums">
                 {sender.unreadCount.toLocaleString()}
               </td>
-              <td className="py-2 pr-3 text-right tabular-nums">
+              <td className="py-2 pr-3 text-right whitespace-nowrap tabular-nums">
                 {formatBytes(sender.totalBytes)}
               </td>
-              <td className="py-2 text-right tabular-nums">
+              <td className="py-2 text-right whitespace-nowrap tabular-nums">
                 {dateFormatter.format(new Date(sender.lastDate))}
               </td>
             </tr>
@@ -226,7 +280,8 @@ export function TopSendersChart({
               <YAxis
                 type="category"
                 dataKey="categoryLabel"
-                width={150}
+                width={185}
+                tick={{ fontSize: 12 }}
                 tickLine={false}
                 axisLine={false}
                 interval={0}
@@ -244,12 +299,7 @@ export function TopSendersChart({
               >
                 <LabelList
                   dataKey="value"
-                  position="right"
-                  className="fill-muted-foreground"
-                  fontSize={12}
-                  formatter={(value: number) =>
-                    formatMetricValue(value, barMetric)
-                  }
+                  content={renderValueLabel(barMetric)}
                 />
               </Bar>
             </BarChart>
