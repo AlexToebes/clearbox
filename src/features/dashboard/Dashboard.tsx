@@ -7,6 +7,7 @@ import {
   type DashboardData,
 } from "@/lib/dashboard/data";
 import type { SenderGroupBy } from "@/lib/db/queries";
+import { MonthlyVolumeChart } from "./MonthlyVolumeChart";
 import { SegmentedControl } from "./SegmentedControl";
 import { ShareDonut } from "./ShareDonut";
 import { StatTiles } from "./StatTiles";
@@ -32,17 +33,18 @@ function DashboardSkeleton() {
         <div className="bg-muted h-80 animate-pulse rounded-xl lg:col-span-2" />
         <div className="bg-muted h-80 animate-pulse rounded-xl lg:col-span-3" />
       </div>
+      <div className="bg-muted h-80 animate-pulse rounded-xl" />
     </div>
   );
 }
 
 /**
  * The mailbox insights dashboard (issue #6): a grouping filter, KPI tiles,
- * and (added in later commits) the top-senders share donut, ranked
- * top-senders chart and monthly volume chart — all backed by one
- * `loadDashboard` call, re-run whenever the scan's `dataVersion`, the
- * grouping or the bar-chart metric changes. Renders nothing until there's
- * anything cached. Replaces `DashboardPlaceholder`.
+ * the top-senders share donut, the ranked top-senders chart and the
+ * monthly volume chart — all backed by one `loadDashboard` call, re-run
+ * whenever the scan's `dataVersion`, the grouping or the bar-chart metric
+ * changes. Renders nothing until there's anything cached. Replaces
+ * `DashboardPlaceholder`.
  */
 export function Dashboard() {
   const { dataVersion, status, run } = useScan();
@@ -114,6 +116,7 @@ export function Dashboard() {
           />
         </div>
       </div>
+      <MonthlyVolumeChart monthly={data.monthly} />
     </div>
   );
 }
