@@ -5,9 +5,7 @@ import { AuthScreen } from "@/features/auth/AuthScreen";
 function App() {
   return (
     <AuthProvider>
-      <main className="flex min-h-screen items-center justify-center p-6">
-        <AuthScreen />
-      </main>
+      <AuthScreen />
       <Toaster />
     </AuthProvider>
   );

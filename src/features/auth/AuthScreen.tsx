@@ -1,9 +1,13 @@
+import { AppShell } from "@/features/shell/AppShell";
 import { useAuth } from "./context";
 import { MissingConfigCard } from "./MissingConfigCard";
-import { SignedInCard } from "./SignedInCard";
 import { SignedOutCard } from "./SignedOutCard";
 
-/** Picks the right card for the current auth status. */
+/**
+ * Picks the right screen for the current auth status. Signed in gets the
+ * full-width `AppShell`; the other two states are small cards that center
+ * themselves on the page.
+ */
 export function AuthScreen() {
   const { status } = useAuth();
 
@@ -11,7 +15,7 @@ export function AuthScreen() {
     case "no_config":
       return <MissingConfigCard />;
     case "signed_in":
-      return <SignedInCard />;
+      return <AppShell />;
     case "signed_out":
       return <SignedOutCard />;
   }

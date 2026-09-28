@@ -61,43 +61,45 @@ export function SignedOutCard() {
   }
 
   return (
-    <Card className="w-full max-w-sm">
-      <CardHeader>
-        <CardTitle className="text-2xl">Clearbox</CardTitle>
-        <CardDescription>Clean up your Gmail, locally.</CardDescription>
-      </CardHeader>
-      <CardContent className="flex flex-col gap-3">
-        {signingIn ? (
-          <div className="flex flex-col gap-2">
-            <Button className="w-full" disabled>
-              Waiting for Google…
+    <div className="flex min-h-screen items-center justify-center p-6">
+      <Card className="w-full max-w-sm">
+        <CardHeader>
+          <CardTitle className="text-2xl">Clearbox</CardTitle>
+          <CardDescription>Clean up your Gmail, locally.</CardDescription>
+        </CardHeader>
+        <CardContent className="flex flex-col gap-3">
+          {signingIn ? (
+            <div className="flex flex-col gap-2">
+              <Button className="w-full" disabled>
+                Waiting for Google…
+              </Button>
+              <Button variant="ghost" className="w-full" onClick={handleCancel}>
+                Cancel
+              </Button>
+            </div>
+          ) : (
+            <Button className="w-full" onClick={() => void handleConnect()}>
+              Connect Gmail
             </Button>
-            <Button variant="ghost" className="w-full" onClick={handleCancel}>
-              Cancel
-            </Button>
-          </div>
-        ) : (
-          <Button className="w-full" onClick={() => void handleConnect()}>
-            Connect Gmail
-          </Button>
-        )}
-        {error && <p className="text-destructive text-sm">{error}</p>}
-        {restoreError !== null && (
-          <div className="text-sm">
-            <p>
-              Clearbox couldn't access your system keychain, which it uses to
-              store your Google sign-in securely.
-            </p>
-            <p className="text-muted-foreground mt-1 text-xs">
-              {describeRestoreError(restoreError)}
-            </p>
-            <p className="text-muted-foreground mt-1 text-xs">
-              If you're on Linux, make sure a Secret Service provider such as
-              GNOME Keyring or KWallet is running.
-            </p>
-          </div>
-        )}
-      </CardContent>
-    </Card>
+          )}
+          {error && <p className="text-destructive text-sm">{error}</p>}
+          {restoreError !== null && (
+            <div className="text-sm">
+              <p>
+                Clearbox couldn't access your system keychain, which it uses to
+                store your Google sign-in securely.
+              </p>
+              <p className="text-muted-foreground mt-1 text-xs">
+                {describeRestoreError(restoreError)}
+              </p>
+              <p className="text-muted-foreground mt-1 text-xs">
+                If you're on Linux, make sure a Secret Service provider such as
+                GNOME Keyring or KWallet is running.
+              </p>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+    </div>
   );
 }
