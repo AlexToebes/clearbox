@@ -153,7 +153,7 @@ function RunningCard({
 }: {
   progress: ScanProgress;
   startedAt: number;
-  onPause: () => void;
+  onPause: () => Promise<void>;
 }) {
   const now = useNow(1000);
   // Before the first tick, elapsedMs is 0 — describeProgress simply
@@ -176,7 +176,7 @@ function RunningCard({
         </CardDescription>
       </CardContent>
       <CardFooter>
-        <Button variant="outline" onClick={onPause}>
+        <Button variant="outline" onClick={() => void onPause()}>
           Pause
         </Button>
       </CardFooter>

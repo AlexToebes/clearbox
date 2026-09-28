@@ -98,12 +98,16 @@ export function getServices(): Services | null {
   // next Gmail call.
   auth.subscribe(() => {
     if (auth.status() === "signed_out") {
-      scan.cancel();
+      void scan.cancel();
     }
   });
 
   async function signOutAndClear(): Promise<void> {
-    scan.cancel();
+    // Wait for the in-progress attempt (if any) to fully stop — including
+    // any write it was in the middle of — before wiping the cache, so
+    // that write can never land after `clearCache` and leave a trace of
+    // the previous account behind.
+    await scan.cancel();
     const db = await getDb();
     await clearCache(db);
     await auth.signOut();

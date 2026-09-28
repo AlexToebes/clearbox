@@ -47,9 +47,12 @@ const STATUS_AFTER_SCAN: ScanStatus = {
 /**
  * A fake `runScan` that hands back a promise the test settles by hand
  * (`resolveLatest`/`rejectLatest`), and captures each call's `onProgress`
- * so the test can emit progress events manually. Also wires the real
- * abort-rejects-the-promise behavior `runFullScan` has, so `cancel()` can
- * be exercised the same way it would against the real thing.
+ * so the test can emit progress events manually. Deliberately does
+ * *nothing* on its own when `signal` is aborted — same as the real
+ * `runFullScan`, which only rejects once its next `throwIfAborted()`
+ * check runs (possibly after finishing whatever DB write it's mid-way
+ * through) — so tests control exactly when, and with what, each attempt
+ * settles.
  */
 function createFakeRunScan(): {
   runScan: (opts: {
@@ -74,12 +77,6 @@ function createFakeRunScan(): {
       return new Promise<ScanResult>((resolve, reject) => {
         resolveCurrent = resolve;
         rejectCurrent = reject;
-        opts.signal.addEventListener(
-          "abort",
-          // eslint-disable-next-line @typescript-eslint/prefer-promise-reject-errors -- mirroring runFullScan's own abort behavior (see scan.test.ts).
-          () => reject(opts.signal.reason),
-          { once: true },
-        );
       });
     },
   );
@@ -169,7 +166,7 @@ describe("createScanController", () => {
     expect(fake.runScan).toHaveBeenCalledTimes(1);
   });
 
-  it("cancel() aborts the run and settles into cancelled, not error", async () => {
+  it("cancel() aborts the run and settles into cancelled, not error, once the run actually rejects", async () => {
     const { now } = createFakeClock();
     const fake = createFakeRunScan();
     const controller = createScanController({
@@ -181,13 +178,120 @@ describe("createScanController", () => {
     controller.start();
     expect(fake.calls[0]!.signal.aborted).toBe(false);
 
-    controller.cancel();
+    const cancelPromise = controller.cancel();
     expect(fake.calls[0]!.signal.aborted).toBe(true);
-    await flush();
+    // Not settled yet — the fake (like the real runFullScan) only rejects
+    // once we tell it to.
+    expect(controller.getState().run.kind).toBe("running");
+
+    // Mirrors runFullScan's own abort behavior: it eventually rejects
+    // with the signal's own reason.
+    fake.rejectLatest(fake.calls[0]!.signal.reason);
+    await cancelPromise;
 
     expect(controller.getState().run).toEqual({ kind: "cancelled" });
     // Cancelling doesn't reload status.
     expect(controller.getState().status).toBeNull();
+  });
+
+  it("cancel()'s promise doesn't resolve until the aborted run has actually settled", async () => {
+    const { now } = createFakeClock();
+    const fake = createFakeRunScan();
+    const controller = createScanController({
+      runScan: fake.runScan,
+      loadStatus: () => Promise.resolve(STATUS_AFTER_SCAN),
+      now,
+    });
+
+    controller.start();
+
+    let resolved = false;
+    const cancelPromise = controller.cancel().then(() => {
+      resolved = true;
+    });
+
+    await flush();
+    expect(resolved).toBe(false);
+
+    fake.rejectLatest(fake.calls[0]!.signal.reason);
+    await cancelPromise;
+    expect(resolved).toBe(true);
+  });
+
+  it("cancel()'s promise waits for a write the aborted run is mid-flight on before resolving", async () => {
+    const { now } = createFakeClock();
+    const fake = createFakeRunScan();
+    const controller = createScanController({
+      runScan: fake.runScan,
+      loadStatus: () => Promise.resolve(STATUS_AFTER_SCAN),
+      now,
+    });
+
+    controller.start();
+
+    const events: string[] = [];
+    const cancelPromise = controller.cancel().then(() => {
+      events.push("cancel-resolved");
+    });
+
+    // Simulate the scan finishing a DB write (e.g. `upsertMessages`) that
+    // was already in flight when the abort signal fired, before its next
+    // `throwIfAborted()` check notices the abort and it actually rejects.
+    await Promise.resolve();
+    events.push("write-committed");
+    fake.rejectLatest(fake.calls[0]!.signal.reason);
+
+    await cancelPromise;
+
+    expect(events).toEqual(["write-committed", "cancel-resolved"]);
+  });
+
+  it("cancel() resolves immediately when nothing is running", async () => {
+    const { now } = createFakeClock();
+    const controller = createScanController({
+      runScan: createFakeRunScan().runScan,
+      loadStatus: () => Promise.resolve(STATUS_AFTER_SCAN),
+      now,
+    });
+
+    let resolved = false;
+    void controller.cancel().then(() => {
+      resolved = true;
+    });
+    await flush();
+
+    expect(resolved).toBe(true);
+  });
+
+  it("start() called right after cancel() waits for the old run to settle before starting a new one", async () => {
+    const { now } = createFakeClock();
+    const fake = createFakeRunScan();
+    const controller = createScanController({
+      runScan: fake.runScan,
+      loadStatus: () => Promise.resolve(STATUS_AFTER_SCAN),
+      now,
+    });
+
+    controller.start();
+    expect(fake.runScan).toHaveBeenCalledTimes(1);
+
+    const cancelPromise = controller.cancel();
+    controller.start();
+
+    // Queued, not overlapping — still only the one call, and the state
+    // never leaves "running" in the meantime.
+    await flush();
+    expect(fake.runScan).toHaveBeenCalledTimes(1);
+    expect(controller.getState().run.kind).toBe("running");
+
+    fake.rejectLatest(fake.calls[0]!.signal.reason);
+    await cancelPromise;
+
+    // The queued start() has now begun a fresh attempt, and the state
+    // was "running" throughout — never briefly "cancelled".
+    expect(fake.runScan).toHaveBeenCalledTimes(2);
+    expect(controller.getState().run.kind).toBe("running");
+    expect(fake.calls[1]!.signal.aborted).toBe(false);
   });
 
   it("a genuine failure surfaces as run: { kind: 'error' }", async () => {
@@ -254,8 +358,9 @@ describe("createScanController", () => {
       now,
     });
     cancelledController.start();
-    cancelledController.cancel();
-    await flush();
+    const cancelPromise = cancelledController.cancel();
+    cancelledFake.rejectLatest(cancelledFake.calls[0]!.signal.reason);
+    await cancelPromise;
     expect(cancelledController.getState().dataVersion).toBe(1);
 
     const erroredFake = createFakeRunScan();

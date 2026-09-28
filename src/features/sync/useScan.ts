@@ -19,8 +19,9 @@ export interface UseScanResult extends ScanControllerState {
   /** No-op if a scan is already running, or if the app has no configured
    * Google OAuth client. */
   start: () => void;
-  /** No-op if no scan is running. */
-  cancel: () => void;
+  /** Resolves once the in-progress run (if any) has fully stopped. A
+   * no-op that resolves immediately if nothing is running. */
+  cancel: () => Promise<void>;
 }
 
 export function useScan(): UseScanResult {
@@ -38,6 +39,6 @@ export function useScan(): UseScanResult {
   return {
     ...state,
     start: () => scan?.start(),
-    cancel: () => scan?.cancel(),
+    cancel: () => scan?.cancel() ?? Promise.resolve(),
   };
 }

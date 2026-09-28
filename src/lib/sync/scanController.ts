@@ -62,12 +62,19 @@ export interface ScanController {
   subscribe(listener: () => void): () => void;
   /** Reloads `status` from `loadStatus()` without starting a run. */
   refreshStatus(): Promise<void>;
-  /** Starts a scan. A no-op if one is already running. */
+  /** Starts a scan. A no-op while one is already actively running.
+   * Called while a previous run is still settling after `cancel()` (i.e.
+   * before that run's promise has resolved), it's queued instead — the
+   * new run begins only once the old one has fully stopped, and `run`
+   * reads as `"running"` continuously in the meantime rather than
+   * flickering through `"cancelled"`. */
   start(): void;
-  /** Aborts the in-progress run, if any. The run settles into
-   * `{ kind: "cancelled" }` once its promise actually rejects — this call
-   * itself doesn't change `getState()` synchronously. */
-  cancel(): void;
+  /** Aborts the in-progress run, if any, and resolves once that attempt
+   * has fully settled — including any write it was in the middle of —
+   * and the resulting state update has been applied. Resolves
+   * immediately if nothing is running. Safe to call without awaiting
+   * when that's not needed. */
+  cancel(): Promise<void>;
   /** Cancels any run and stops notifying listeners. Safe to call more
    * than once. */
   dispose(): void;
@@ -82,6 +89,14 @@ export function createScanController(deps: ScanControllerDeps): ScanController {
   };
   const listeners = new Set<() => void>();
   let activeController: AbortController | null = null;
+  /** The currently in-flight attempt's settle promise, captured by
+   * `cancel()` so it can hand back exactly that attempt's completion —
+   * not whatever attempt happens to be running by the time it resolves. */
+  let activeRunSettled: Promise<void> | null = null;
+  /** Set when `start()` is called while the previous attempt is still
+   * settling after being aborted — consumed once that attempt finishes,
+   * to begin a fresh one right away instead of overlapping it. */
+  let pendingStart = false;
   let disposed = false;
 
   function setState(next: ScanControllerState): void {
@@ -99,14 +114,15 @@ export function createScanController(deps: ScanControllerDeps): ScanController {
     setState({ ...state, status });
   }
 
-  function start(): void {
-    if (disposed || state.run.kind === "running") {
-      return;
-    }
-
-    const controller = new AbortController();
-    activeController = controller;
-    const startedAt = deps.now();
+  /** Runs one scan attempt end to end: emits progress, and on settling
+   * either applies the resulting state (idle/error/cancelled) or, if a
+   * `start()` came in while this attempt was being cancelled, chains
+   * straight into a new attempt without ever reporting anything other
+   * than `"running"`. */
+  async function runAttempt(
+    controller: AbortController,
+    startedAt: number,
+  ): Promise<void> {
     let lastEmittedListed = 0;
     // -Infinity so the very first page that completes always bumps
     // `dataVersion`, regardless of how soon it lands.
@@ -138,52 +154,98 @@ export function createScanController(deps: ScanControllerDeps): ScanController {
       });
     }
 
+    try {
+      await deps.runScan({ signal: controller.signal, onProgress });
+      if (isStale()) {
+        return;
+      }
+      const status = await deps.loadStatus();
+      if (isStale()) {
+        return;
+      }
+      setState({
+        status,
+        run: { kind: "idle" },
+        dataVersion: state.dataVersion + 1,
+      });
+    } catch (err) {
+      if (disposed) {
+        return;
+      }
+      // We're the only ones who ever abort `controller`, so if it's
+      // aborted this rejection is the cancellation we asked for, not a
+      // genuine failure — regardless of what `err` actually is.
+      const wasAborted = controller.signal.aborted;
+      if (pendingStart) {
+        if (!wasAborted) {
+          // A genuine failure, not our own cancellation — surface it
+          // even though a start() also came in around the same time
+          // (pendingStart is otherwise only ever set alongside an abort
+          // we ourselves requested, so this is a defensive fallback).
+          setState({
+            ...state,
+            run: { kind: "error", error: err },
+            dataVersion: state.dataVersion + 1,
+          });
+          pendingStart = false;
+        }
+        // Else: leave `run` exactly as it was ("running") — the chained
+        // attempt below picks it back up without ever reporting
+        // "cancelled" in between.
+      } else {
+        const run: ScanRunState = wasAborted
+          ? { kind: "cancelled" }
+          : { kind: "error", error: err };
+        setState({ ...state, run, dataVersion: state.dataVersion + 1 });
+      }
+    } finally {
+      if (activeController === controller) {
+        activeController = null;
+      }
+    }
+
+    if (!disposed && pendingStart) {
+      pendingStart = false;
+      beginRun();
+    }
+  }
+
+  function beginRun(): void {
+    const controller = new AbortController();
+    activeController = controller;
+    const startedAt = deps.now();
+
     setState({
       ...state,
       run: { kind: "running", progress: INITIAL_PROGRESS, startedAt },
     });
 
-    void deps
-      .runScan({ signal: controller.signal, onProgress })
-      .then(async () => {
-        if (isStale()) {
-          return;
-        }
-        const status = await deps.loadStatus();
-        if (isStale()) {
-          return;
-        }
-        setState({
-          status,
-          run: { kind: "idle" },
-          dataVersion: state.dataVersion + 1,
-        });
-      })
-      .catch((err: unknown) => {
-        if (isStale()) {
-          return;
-        }
-        // We're the only ones who ever abort `controller`, so if it's
-        // aborted this rejection is the cancellation we asked for, not a
-        // genuine failure — regardless of what `err` actually is.
-        const run: ScanRunState = controller.signal.aborted
-          ? { kind: "cancelled" }
-          : { kind: "error", error: err };
-        setState({ ...state, run, dataVersion: state.dataVersion + 1 });
-      })
-      .finally(() => {
-        if (activeController === controller) {
-          activeController = null;
-        }
-      });
+    activeRunSettled = runAttempt(controller, startedAt);
   }
 
-  function cancel(): void {
+  function start(): void {
+    if (disposed) {
+      return;
+    }
+    if (state.run.kind === "running") {
+      if (activeController?.signal.aborted) {
+        pendingStart = true;
+      }
+      // Otherwise a genuine run is already active: ignore, same as a
+      // plain double `start()`.
+      return;
+    }
+    beginRun();
+  }
+
+  function cancel(): Promise<void> {
+    const settled = activeRunSettled ?? Promise.resolve();
     activeController?.abort();
+    return settled;
   }
 
   function dispose(): void {
-    cancel();
+    void cancel();
     disposed = true;
     listeners.clear();
   }
