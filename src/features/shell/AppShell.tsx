@@ -2,14 +2,14 @@ import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { DashboardPlaceholder } from "@/features/dashboard/DashboardPlaceholder";
+import { Dashboard } from "@/features/dashboard/Dashboard";
 import { useAuth } from "@/features/auth/context";
 import { ScanPanel } from "@/features/sync/ScanPanel";
 
 /**
  * The signed-in app shell: a slim top bar (wordmark, account email, sign
  * out) over a full-width main area with the mailbox scan panel and (once
- * there's anything cached) the dashboard placeholder. Replaces the old
+ * there's anything cached) the insights dashboard. Replaces the old
  * `SignedInCard`.
  */
 export function AppShell() {
@@ -74,7 +74,7 @@ export function AppShell() {
       </header>
       <main className="mx-auto flex w-full max-w-6xl flex-col gap-6 px-6 py-6">
         <ScanPanel />
-        <DashboardPlaceholder />
+        <Dashboard />
       </main>
     </div>
   );
