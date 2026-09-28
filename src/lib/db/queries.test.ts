@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import { toMessageRow } from "@/lib/gmail/parse";
 import type { GmailMessage } from "@/lib/gmail/types";
 import {
+  clearCache,
+  deleteSyncState,
   getKnownIds,
   getMonthlyVolume,
   getSenders,
@@ -9,6 +11,7 @@ import {
   getSyncState,
   setSyncState,
   setTrashed,
+  SYNC_KEYS,
   upsertMessages,
 } from "./queries";
 import { createTestDb } from "./testing";
@@ -524,5 +527,69 @@ describe("sync state", () => {
 
     await setSyncState(db, "historyId", "222");
     expect(await getSyncState(db, "historyId")).toBe("222");
+  });
+
+  it("SYNC_KEYS spells out the keys the app agrees on", () => {
+    expect(SYNC_KEYS).toEqual({
+      accountEmail: "account_email",
+      historyId: "history_id",
+      scanStartHistoryId: "scan_start_history_id",
+      lastFullScanAt: "last_full_scan_at",
+    });
+  });
+});
+
+describe("deleteSyncState", () => {
+  it("removes a set value", async () => {
+    const db = createTestDb();
+    await setSyncState(db, SYNC_KEYS.historyId, "111");
+
+    await deleteSyncState(db, SYNC_KEYS.historyId);
+
+    expect(await getSyncState(db, SYNC_KEYS.historyId)).toBeNull();
+  });
+
+  it("is a no-op for a key that was never set", async () => {
+    const db = createTestDb();
+    await expect(
+      deleteSyncState(db, SYNC_KEYS.historyId),
+    ).resolves.toBeUndefined();
+    expect(await getSyncState(db, SYNC_KEYS.historyId)).toBeNull();
+  });
+
+  it("leaves other keys untouched", async () => {
+    const db = createTestDb();
+    await setSyncState(db, SYNC_KEYS.historyId, "111");
+    await setSyncState(db, SYNC_KEYS.accountEmail, "alex@example.com");
+
+    await deleteSyncState(db, SYNC_KEYS.historyId);
+
+    expect(await getSyncState(db, SYNC_KEYS.accountEmail)).toBe(
+      "alex@example.com",
+    );
+  });
+});
+
+describe("clearCache", () => {
+  it("deletes all messages and all sync_state rows", async () => {
+    const db = createTestDb();
+    await upsertMessages(db, [
+      row({ id: "m1", from: "a@example.com", date: "2024-01-01T00:00:00Z" }),
+      row({ id: "m2", from: "b@example.com", date: "2024-01-02T00:00:00Z" }),
+    ]);
+    await setSyncState(db, SYNC_KEYS.accountEmail, "alex@example.com");
+    await setSyncState(db, SYNC_KEYS.historyId, "999");
+
+    await clearCache(db);
+
+    expect((await getSummary(db)).totalMessages).toBe(0);
+    expect(await getSyncState(db, SYNC_KEYS.accountEmail)).toBeNull();
+    expect(await getSyncState(db, SYNC_KEYS.historyId)).toBeNull();
+  });
+
+  it("is a no-op (doesn't throw) on an already-empty database", async () => {
+    const db = createTestDb();
+    await expect(clearCache(db)).resolves.toBeUndefined();
+    expect((await getSummary(db)).totalMessages).toBe(0);
   });
 });

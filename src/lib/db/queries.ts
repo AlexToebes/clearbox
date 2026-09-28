@@ -365,3 +365,38 @@ export async function setSyncState(
     [key, value],
   );
 }
+
+/** Deletes a `sync_state` value, if set. A no-op if it's already unset. */
+export async function deleteSyncState(db: Db, key: string): Promise<void> {
+  await db.execute("DELETE FROM sync_state WHERE key = $1", [key]);
+}
+
+/** The `sync_state` keys the app reads/writes (see "Sync" in
+ * `docs/ARCHITECTURE.md`). Centralized here so a full scan (issue #4) and
+ * incremental sync (issue #5) agree on spelling. */
+export const SYNC_KEYS = {
+  /** The signed-in account's address, used to detect an account switch
+   * (see `clearCache`). */
+  accountEmail: "account_email",
+  /** The Gmail `historyId` incremental sync resumes from. */
+  historyId: "history_id",
+  /** Set for the duration of a full scan to the `historyId` the scan
+   * started at, so a resumed scan replays from the same point rather than
+   * the point it was interrupted at — messages already cached by an
+   * earlier partial run could have changed since. Deleted once the scan
+   * finishes. */
+  scanStartHistoryId: "scan_start_history_id",
+  /** `String(Date.now())` of the last full scan to finish successfully. */
+  lastFullScanAt: "last_full_scan_at",
+} as const;
+
+/**
+ * Wipes the local cache: every `messages` row and every `sync_state`
+ * value. Used when the signed-in Gmail account changes, since a cache
+ * built from a different account's mailbox is meaningless (and its
+ * `historyId` doesn't belong to the new account either).
+ */
+export async function clearCache(db: Db): Promise<void> {
+  await db.execute("DELETE FROM messages");
+  await db.execute("DELETE FROM sync_state");
+}
