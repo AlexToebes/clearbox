@@ -79,6 +79,34 @@ Other scripts:
 keychain; it's `#[ignore]`d by default, so run it explicitly with
 `cd src-tauri && cargo test -- --ignored`.
 
+## Demo mode
+
+`pnpm dev:demo` runs Clearbox in a plain browser tab, no Tauri and no
+Google account needed — useful for developing or screenshotting the UI. It
+runs the real UI, the real full-scan flow, and real SQL queries against a
+real (in-memory, [sqlite-wasm](https://sqlite.org/wasm)-backed) database;
+only the platform edges are faked: a fake, always-signed-in `AuthSession`
+and a fake `GmailClient` serving a deterministically generated mailbox
+(`src/dev/fakeMailbox.ts`) instead of talking to Google. See
+`src/dev/demoServices.ts` for how it's wired up.
+
+```sh
+pnpm dev:demo
+```
+
+Query params (all optional):
+
+| Param       | Does                                                              |
+| ----------- | ----------------------------------------------------------------- |
+| `messages`  | How many fake messages to generate. Defaults to `20000`.          |
+| `seed`      | PRNG seed — same seed + `messages` always gives the same mailbox. |
+| `speed`     | Simulated network latency multiplier; `0` fetches instantly.      |
+| `scanned=1` | Pre-populates the database as if a full scan already completed.   |
+
+A "Demo mode — fake data" badge shows in the top bar. This mode is only
+ever reachable via `vite --mode demo`; a production build (`pnpm build`)
+never includes `src/dev/*` or `@sqlite.org/sqlite-wasm`.
+
 ## Roadmap
 
 Clearbox is built issue by issue — see the

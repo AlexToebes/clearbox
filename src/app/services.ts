@@ -38,8 +38,11 @@ export interface Services {
 let services: Services | null = null;
 
 /** Builds the scan controller, wiring `runFullScan`/`getScanStatus` up to
- * `getDb`/`gmail` (see "Sync" in `docs/ARCHITECTURE.md`). */
-function createScan(
+ * `getDb`/`gmail` (see "Sync" in `docs/ARCHITECTURE.md`). Exported so
+ * browser demo mode (`src/dev/demoServices.ts`) can build a real
+ * `ScanController` around its fake `GmailClient`/`Db` instead of
+ * duplicating this wiring. */
+export function createScan(
   gmail: GmailClient,
   getDb: () => Promise<Db>,
 ): ScanController {
@@ -51,6 +54,27 @@ function createScan(
     loadStatus: async () => getScanStatus(await getDb()),
     now: Date.now,
   });
+}
+
+/** Builds `Services.signOutAndClear` (see its doc comment there). Exported
+ * so browser demo mode (`src/dev/demoServices.ts`) shares this wiring —
+ * its fake `AuthSession` still needs a real cache wipe on sign-out — rather
+ * than duplicating it. */
+export function createSignOutAndClear(
+  auth: AuthSession,
+  scan: ScanController,
+  getDb: () => Promise<Db>,
+): () => Promise<void> {
+  return async function signOutAndClear(): Promise<void> {
+    // Wait for the in-progress attempt (if any) to fully stop — including
+    // any write it was in the middle of — before wiping the cache, so
+    // that write can never land after `clearCache` and leave a trace of
+    // the previous account behind.
+    await scan.cancel();
+    const db = await getDb();
+    await clearCache(db);
+    await auth.signOut();
+  };
 }
 
 /**
@@ -102,16 +126,7 @@ export function getServices(): Services | null {
     }
   });
 
-  async function signOutAndClear(): Promise<void> {
-    // Wait for the in-progress attempt (if any) to fully stop — including
-    // any write it was in the middle of — before wiping the cache, so
-    // that write can never land after `clearCache` and leave a trace of
-    // the previous account behind.
-    await scan.cancel();
-    const db = await getDb();
-    await clearCache(db);
-    await auth.signOut();
-  }
+  const signOutAndClear = createSignOutAndClear(auth, scan, getDb);
 
   services = { auth, gmail, getDb, scan, signOutAndClear };
   return services;

@@ -6,6 +6,7 @@
   "packageManager": "pnpm@10.33.0",
   "scripts": {
     "dev": "vite",
+    "dev:demo": "vite --mode demo",
     "build": "tsc && vite build",
     "preview": "vite preview",
     "tauri": "tauri",
@@ -39,6 +40,7 @@
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
+    "@sqlite.org/sqlite-wasm": "3.53.4-build1",
     "@tauri-apps/cli": "^2",
     "@types/node": "^26.6.2",
     "@types/react": "^19.1.8",

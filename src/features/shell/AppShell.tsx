@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { DashboardPlaceholder } from "@/features/dashboard/DashboardPlaceholder";
 import { useAuth } from "@/features/auth/context";
@@ -51,7 +52,12 @@ export function AppShell() {
     <div className="flex min-h-screen flex-col">
       <header className="border-b">
         <div className="mx-auto flex max-w-6xl items-center justify-between px-6 py-3">
-          <span className="text-lg font-semibold">Clearbox</span>
+          <div className="flex items-center gap-2">
+            <span className="text-lg font-semibold">Clearbox</span>
+            {import.meta.env.MODE === "demo" && (
+              <Badge variant="secondary">Demo mode — fake data</Badge>
+            )}
+          </div>
           <div className="flex items-center gap-3">
             {email && (
               <span className="text-muted-foreground text-sm">{email}</span>

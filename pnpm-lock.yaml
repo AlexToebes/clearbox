@@ -69,6 +69,9 @@ importers:
       '@eslint/js':
         specifier: ^10.0.1
         version: 10.0.1(eslint@10.11.0(jiti@2.7.0))
+      '@sqlite.org/sqlite-wasm':
+        specifier: 3.53.4-build1
+        version: 3.53.4-build1
       '@tauri-apps/cli':
         specifier: ^2
         version: 2.11.5
@@ -445,6 +448,10 @@ packages:
 
   '@rolldown/pluginutils@1.0.1':
     resolution: {integrity: sha512-2j9bGt5Jh8hj+vPtgzPtl72j0yRxHAyumoo6TNfAjsLB04UtpSvPbPcDcBMxz7n+9CYB0c1GxQFxYRg2jimqGw==}
+
+  '@sqlite.org/sqlite-wasm@3.53.4-build1':
+    resolution: {integrity: sha512-U8pvL0patYHMgieD8JxxYJTlh9m1LUX8+BDYb7MiKQzBI89f2qbdmdcG/PvnPaLm9wsBbv4VlVG453ixnxBOnA==}
+    engines: {node: '>=22'}
 
   '@tailwindcss/node@4.3.3':
     resolution: {integrity: sha512-/T8IKEsf9VTU6tLjgC7+sv2mOPtQxzE2jMw7u4Tt40Tx+QSZxpzh95/H6cMKoja9XuW7iMdLJYBB0o9G1CaAgg==}
@@ -1915,6 +1922,8 @@ snapshots:
     optional: true
 
   '@rolldown/pluginutils@1.0.1': {}
+
+  '@sqlite.org/sqlite-wasm@3.53.4-build1': {}
 
   '@tailwindcss/node@4.3.3':
     dependencies:
