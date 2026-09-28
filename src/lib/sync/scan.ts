@@ -22,6 +22,7 @@ import {
 import type { MessageRow } from "@/lib/db/types";
 import type { GmailClient } from "@/lib/gmail/client";
 import { toMessageRow } from "@/lib/gmail/parse";
+import type { GmailMessage } from "@/lib/gmail/types";
 
 /** Ids fetched per `messages.list` page (Gmail's own per-page maximum). */
 const PAGE_SIZE = 500;
@@ -95,8 +96,11 @@ function throwIfAborted(signal: AbortSignal | undefined): void {
  * started; in-flight ones receive the same signal), leaves rows from
  * already-committed pages in place, and rejects with `signal`'s abort
  * reason without writing `history_id`/`last_full_scan_at` — a later call
- * resumes the same scan. Any other error (e.g. `GmailApiError`) propagates
- * the same way.
+ * resumes the same scan. Any other error (e.g. `GmailApiError` from one
+ * worker's `getMessageMetadata` call) propagates the same way, and — just
+ * like an abort — stops that page's *other* in-flight workers first
+ * (via an internal `AbortController`) rather than letting them keep
+ * spending quota on results that are about to be discarded anyway.
  */
 export async function runFullScan(opts: ScanOptions): Promise<ScanResult> {
   const { gmail, db, now, signal, onProgress } = opts;
@@ -104,114 +108,159 @@ export async function runFullScan(opts: ScanOptions): Promise<ScanResult> {
 
   throwIfAborted(signal);
 
-  const profile = await gmail.getProfile(signal);
-
-  const storedEmail = await getSyncState(db, SYNC_KEYS.accountEmail);
-  if (storedEmail !== null && storedEmail !== profile.emailAddress) {
-    await clearCache(db);
+  // Mirrors `signal`, but can also be aborted from the inside — when one
+  // worker's `getMessageMetadata` fails, we abort this to cancel its
+  // still-running siblings immediately, the same way an external abort
+  // would. `runFullScan` itself still rejects with whatever actually
+  // caused the abort (the outer signal's reason if that's what happened,
+  // otherwise the worker's own error) — see the page loop below.
+  const internalController = new AbortController();
+  const internalSignal = internalController.signal;
+  function onOuterAbort(): void {
+    internalController.abort(signal!.reason);
   }
-  await setSyncState(db, SYNC_KEYS.accountEmail, profile.emailAddress);
+  signal?.addEventListener("abort", onOuterAbort, { once: true });
 
-  let scanStartHistoryId = await getSyncState(db, SYNC_KEYS.scanStartHistoryId);
-  if (scanStartHistoryId === null) {
-    scanStartHistoryId = profile.historyId;
-    await setSyncState(db, SYNC_KEYS.scanStartHistoryId, scanStartHistoryId);
-  }
+  try {
+    const profile = await gmail.getProfile(internalSignal);
 
-  const total = profile.messagesTotal;
-  let listed = 0;
-  let alreadyCached = 0;
-  let fetched = 0;
-  let skippedDeleted = 0;
-  let fetchedSinceEmit = 0;
+    const storedEmail = await getSyncState(db, SYNC_KEYS.accountEmail);
+    if (storedEmail !== null && storedEmail !== profile.emailAddress) {
+      await clearCache(db);
+    }
+    await setSyncState(db, SYNC_KEYS.accountEmail, profile.emailAddress);
 
-  function emit(phase: ScanProgress["phase"]): void {
-    onProgress?.({
-      phase,
-      total,
-      listed,
-      alreadyCached,
-      fetched,
-      skippedDeleted,
-    });
-  }
+    let scanStartHistoryId = await getSyncState(
+      db,
+      SYNC_KEYS.scanStartHistoryId,
+    );
+    if (scanStartHistoryId === null) {
+      scanStartHistoryId = profile.historyId;
+      await setSyncState(db, SYNC_KEYS.scanStartHistoryId, scanStartHistoryId);
+    }
 
-  emit("starting");
+    const total = profile.messagesTotal;
+    let listed = 0;
+    let alreadyCached = 0;
+    let fetched = 0;
+    let skippedDeleted = 0;
+    let fetchedSinceEmit = 0;
 
-  let pageToken: string | undefined;
-  for (;;) {
-    throwIfAborted(signal);
+    function emit(phase: ScanProgress["phase"]): void {
+      onProgress?.({
+        phase,
+        total,
+        listed,
+        alreadyCached,
+        fetched,
+        skippedDeleted,
+      });
+    }
 
-    const page = await gmail.listMessageIds({
-      pageToken,
-      maxResults: PAGE_SIZE,
-      signal,
-    });
-    listed += page.ids.length;
+    emit("starting");
 
-    const known = await getKnownIds(db, page.ids);
-    alreadyCached += known.size;
-    const unknownIds = page.ids.filter((id) => !known.has(id));
+    let pageToken: string | undefined;
+    for (;;) {
+      throwIfAborted(internalSignal);
 
-    const pageRows: MessageRow[] = [];
-    let nextIndex = 0;
+      const page = await gmail.listMessageIds({
+        pageToken,
+        maxResults: PAGE_SIZE,
+        signal: internalSignal,
+      });
+      listed += page.ids.length;
 
-    async function worker(): Promise<void> {
-      for (;;) {
-        throwIfAborted(signal);
-        const index = nextIndex;
-        if (index >= unknownIds.length) {
-          return;
-        }
-        nextIndex += 1;
+      const known = await getKnownIds(db, page.ids);
+      alreadyCached += known.size;
+      const unknownIds = page.ids.filter((id) => !known.has(id));
 
-        const id = unknownIds[index]!;
-        const message = await gmail.getMessageMetadata(id, signal);
-        if (message === null) {
-          skippedDeleted += 1;
-        } else {
-          pageRows.push(toMessageRow(message));
-          fetched += 1;
-        }
+      const pageRows: MessageRow[] = [];
+      let nextIndex = 0;
 
-        fetchedSinceEmit += 1;
-        if (fetchedSinceEmit >= PROGRESS_FETCH_INTERVAL) {
-          fetchedSinceEmit = 0;
-          emit("scanning");
+      async function worker(): Promise<void> {
+        for (;;) {
+          throwIfAborted(internalSignal);
+          const index = nextIndex;
+          if (index >= unknownIds.length) {
+            return;
+          }
+          nextIndex += 1;
+
+          const id = unknownIds[index]!;
+          let message: GmailMessage | null;
+          try {
+            message = await gmail.getMessageMetadata(id, internalSignal);
+          } catch (err) {
+            // Cancel this page's other in-flight/not-yet-started workers
+            // right away instead of letting them keep fetching results
+            // that are about to be discarded (this page's rows never get
+            // upserted below).
+            internalController.abort(err);
+            throw err;
+          }
+
+          if (message === null) {
+            skippedDeleted += 1;
+          } else {
+            pageRows.push(toMessageRow(message));
+            fetched += 1;
+          }
+
+          fetchedSinceEmit += 1;
+          if (fetchedSinceEmit >= PROGRESS_FETCH_INTERVAL) {
+            fetchedSinceEmit = 0;
+            emit("scanning");
+          }
         }
       }
+
+      const workerCount = Math.min(concurrency, unknownIds.length);
+      // Promise.allSettled (not Promise.all) so we always wait for every
+      // worker to actually finish — not just the first one to reject —
+      // before this function's promise settles. Promise.all would leave
+      // the rest running in the background.
+      const settled = await Promise.allSettled(
+        Array.from({ length: workerCount }, () => worker()),
+      );
+      const failure = settled.find(
+        (result): result is PromiseRejectedResult =>
+          result.status === "rejected",
+      );
+      if (failure) {
+        // This page's rows were never upserted, so at most one page of
+        // already-fetched-but-uncommitted work is lost, matching the
+        // module doc comment. An outer abort (if that's what happened)
+        // takes priority as the reported reason over a worker's own error,
+        // even though both may have raced to abort `internalSignal`.
+        throw signal?.aborted ? signal.reason : failure.reason;
+      }
+
+      if (pageRows.length > 0) {
+        await upsertMessages(db, pageRows);
+      }
+      emit("scanning");
+
+      if (page.nextPageToken === null) {
+        break;
+      }
+      pageToken = page.nextPageToken;
     }
 
-    const workerCount = Math.min(concurrency, unknownIds.length);
-    // A rejection here (abort, or any other error) is left to propagate:
-    // this page's rows were never upserted, so at most one page of
-    // already-fetched-but-uncommitted work is lost, matching the module
-    // doc comment.
-    await Promise.all(Array.from({ length: workerCount }, () => worker()));
+    await setSyncState(db, SYNC_KEYS.historyId, scanStartHistoryId);
+    await deleteSyncState(db, SYNC_KEYS.scanStartHistoryId);
+    await setSyncState(db, SYNC_KEYS.lastFullScanAt, String(now()));
+    emit("done");
 
-    if (pageRows.length > 0) {
-      await upsertMessages(db, pageRows);
-    }
-    emit("scanning");
-
-    if (page.nextPageToken === null) {
-      break;
-    }
-    pageToken = page.nextPageToken;
+    return {
+      accountEmail: profile.emailAddress,
+      fetched,
+      alreadyCached,
+      skippedDeleted,
+      historyId: scanStartHistoryId,
+    };
+  } finally {
+    signal?.removeEventListener("abort", onOuterAbort);
   }
-
-  await setSyncState(db, SYNC_KEYS.historyId, scanStartHistoryId);
-  await deleteSyncState(db, SYNC_KEYS.scanStartHistoryId);
-  await setSyncState(db, SYNC_KEYS.lastFullScanAt, String(now()));
-  emit("done");
-
-  return {
-    accountEmail: profile.emailAddress,
-    fetched,
-    alreadyCached,
-    skippedDeleted,
-    historyId: scanStartHistoryId,
-  };
 }
 
 export interface ScanStatus {

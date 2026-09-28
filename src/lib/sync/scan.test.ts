@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { getSyncState, setSyncState, SYNC_KEYS } from "@/lib/db/queries";
 import { createTestDb } from "@/lib/db/testing";
-import type { GmailClient } from "@/lib/gmail/client";
+import { GmailApiError, type GmailClient } from "@/lib/gmail/client";
 import type { GmailMessage, GmailProfile } from "@/lib/gmail/types";
 import { getScanStatus, runFullScan, type ScanProgress } from "./scan";
 
@@ -390,6 +390,99 @@ describe("runFullScan", () => {
     expect(result.fetched).toBe(25);
     expect(tracker.max).toBeLessThanOrEqual(4);
     expect(tracker.max).toBeGreaterThan(1); // sanity: actually ran concurrently
+  });
+
+  it("stops sibling workers as soon as one getMessageMetadata call fails, and rejects with that original error", async () => {
+    const db = createTestDb();
+    const badError = new GmailApiError(403, "insufficientPermissions", "nope");
+    // Only "bad", "g1" and "g2" should ever be started: with concurrency 3,
+    // those are the only ids the 3 workers grab before "bad" fails and
+    // stops the pool. "g3".."g9" must never be fetched.
+    const ids = ["bad", "g1", "g2", "g3", "g4", "g5", "g6", "g7", "g8", "g9"];
+
+    let inFlight = 0;
+    const started: string[] = [];
+    const sawAbortedSignal: string[] = [];
+
+    const gmail: Pick<
+      GmailClient,
+      "getProfile" | "listMessageIds" | "getMessageMetadata"
+    > = {
+      getProfile: () => Promise.resolve(PROFILE),
+      listMessageIds: () =>
+        Promise.resolve({
+          ids,
+          nextPageToken: null,
+          resultSizeEstimate: ids.length,
+        }),
+      getMessageMetadata: async (id, signal) => {
+        started.push(id);
+        inFlight += 1;
+        try {
+          if (id === "bad") {
+            // Fails immediately (no delay), so it's the first to settle.
+            throw badError;
+          }
+          // The "good" ids are still in flight when "bad" fails; give
+          // them time to observe the internal signal aborting.
+          await new Promise((resolve) => setTimeout(resolve, 15));
+          if (signal?.aborted) {
+            sawAbortedSignal.push(id);
+            throw signal.reason;
+          }
+          return makeMessage({
+            id,
+            from: "a@x.com",
+            date: "2024-01-01T00:00:00Z",
+          });
+        } finally {
+          inFlight -= 1;
+        }
+      },
+    };
+
+    await expect(
+      runFullScan({ gmail, db, now: () => 1, concurrency: 3 }),
+    ).rejects.toBe(badError);
+
+    // No fetch was left running once runFullScan settled.
+    expect(inFlight).toBe(0);
+    // Only the 3 initially-dispatched ids ever started.
+    expect(started.sort()).toEqual(["bad", "g1", "g2"]);
+    // Both in-flight siblings observed the abort.
+    expect(sawAbortedSignal.sort()).toEqual(["g1", "g2"]);
+    // The failed page's rows (none, since none of "g1"/"g2" got stored)
+    // were never committed, and no sync state got written this run.
+    expect(await cachedIds(db)).toEqual([]);
+    expect(await getSyncState(db, SYNC_KEYS.historyId)).toBeNull();
+  });
+
+  it("still rejects with the outer signal's abort reason even if a worker fails around the same time", async () => {
+    const db = createTestDb();
+    const ids = ["a", "b", "c"];
+    const messages = new Map(
+      ids.map((id) => [
+        id,
+        makeMessage({ id, from: "a@x.com", date: "2024-01-01T00:00:00Z" }),
+      ]),
+    );
+    const controller = new AbortController();
+    const gmail = createFakeGmail({
+      getProfile: () => PROFILE,
+      pages: [{ ids, nextPageToken: null }],
+      messages,
+      onAfterFetch: () => controller.abort(),
+    });
+
+    await expect(
+      runFullScan({
+        gmail,
+        db,
+        now: () => 1,
+        signal: controller.signal,
+        concurrency: 1,
+      }),
+    ).rejects.toBeInstanceOf(DOMException);
   });
 
   it("emits progress events that are monotonic per field and end with phase 'done'", async () => {
